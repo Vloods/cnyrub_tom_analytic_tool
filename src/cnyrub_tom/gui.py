@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import queue
 import shlex
 import subprocess
@@ -145,6 +146,31 @@ def recorder_state_line(is_running: bool, current_action: str | None) -> str:
     return f"Выполняется: {current_action or 'команда'}"
 
 
+def setup_steps() -> list[str]:
+    return [
+        "1. Запусти QUIK и открой нужный инструмент CNYRUB_TOM.",
+        "2. В QUIK запусти QLua-скрипт экспорта стакана.",
+        "3. Нажми «Показать стакан», чтобы проверить JSON-файл.",
+        "4. Нажми «Запустить запись» — данные начнут писаться в SQLite.",
+        "5. Смотри блок «Момент рынка»: преимущество, imbalance и паттерн.",
+    ]
+
+
+def action_help_text(action: str) -> str:
+    return {
+        "record-orderbook": "Запускает сбор данных: пишет стакан из QUIK JSON в SQLite для анализа и будущего обучения модели.",
+        "orderbook": "разово читает текущий QUIK JSON и показывает стакан без запуска записи.",
+        "analyze-orderbook": "Создает CSV со spread, mid, depth и imbalance по записанной истории стакана.",
+        "detect-accumulation": "Создает CSV с зонами накопления: покупатель, продавец или баланс.",
+        "detect-liquidity-events": "Создает CSV с кандидатами поглощения и Iceberg по стакану и сделкам.",
+        "export-orderbook": "Экспортирует сырую историю стакана в JSONL для дальнейшей обработки.",
+        "quote": "Проверяет текущую котировку через MOEX ISS.",
+        "trades": "Сохраняет обезличенные сделки MOEX в CSV.",
+        "analyze-trades": "Считает VWAP, объем и buy/sell imbalance по сделкам.",
+        "candles": "Скачивает свечи MOEX ISS в CSV.",
+    }.get(action, "Выполняет выбранную команду.")
+
+
 def dashboard_state_lines(state: DashboardState) -> dict[str, str]:
     db_label = {
         "connected": "подключена",
@@ -182,14 +208,15 @@ class CnyrubGui:
         self.tk = tk
         self.ttk = ttk
         self.root = tk.Tk()
-        self.root.title("CNYRUB_TOM Analytics Tool")
-        self.root.geometry("1040x760")
+        self.root.title("CNYRUB_TOM Control Panel")
+        self.root.geometry("1120x820")
         self.output_queue: queue.Queue[str] = queue.Queue()
         self.process: subprocess.Popen[str] | None = None
         self.current_action: str | None = None
         self.fields: dict[str, tk.StringVar] = {}
         self.status_vars: dict[str, tk.StringVar] = {}
         self.recorder_state_var = tk.StringVar(value=recorder_state_line(False, None))
+        self.help_var = tk.StringVar(value="Готово. Начни с запуска QUIK и проверки стакана.")
         self._build_ui()
         self.root.after(100, self._drain_output_queue)
         self.root.after(250, self._refresh_dashboard_state)
@@ -215,10 +242,24 @@ class CnyrubGui:
         main = ttk.Frame(self.root, padding=10)
         main.pack(fill="both", expand=True)
 
+        style = ttk.Style()
+        style.configure("Primary.TButton", font=("Segoe UI", 11, "bold"), padding=(10, 6))
+        style.configure("Danger.TButton", font=("Segoe UI", 11, "bold"), padding=(10, 6))
+        style.configure("Card.TLabelframe", padding=10)
+
         header = ttk.Frame(main)
         header.pack(fill="x")
-        ttk.Label(header, text="CNYRUB_TOM Analytics Tool", font=("Segoe UI", 16, "bold")).pack(side="left")
+        ttk.Label(header, text="CNYRUB_TOM Control Panel", font=("Segoe UI", 18, "bold")).pack(side="left")
+        ttk.Label(header, text="QUIK → SQLite → анализ → ML dataset", font=("Segoe UI", 10)).pack(side="left", padx=12)
         ttk.Button(header, text="Проверить котировку", command=lambda: self.run_action("quote")).pack(side="right", padx=4)
+
+        guide = ttk.LabelFrame(main, text="Как начать", padding=8)
+        guide.pack(fill="x", pady=8)
+        for row, step in enumerate(setup_steps()):
+            ttk.Label(guide, text=step).grid(row=row, column=0, sticky="w", padx=6, pady=1)
+        ttk.Button(guide, text="Открыть папку QUIK export", command=lambda: self.open_path("export_dir")).grid(row=0, column=1, sticky="e", padx=6)
+        ttk.Button(guide, text="Открыть папку проекта", command=lambda: self.open_path("project_dir")).grid(row=1, column=1, sticky="e", padx=6)
+        guide.columnconfigure(0, weight=1)
 
         settings = ttk.LabelFrame(main, text="Основные настройки", padding=8)
         settings.pack(fill="x", pady=8)
@@ -226,14 +267,20 @@ class CnyrubGui:
         self._add_row(settings, 1, "QUIK JSON стакана", "orderbook_path", paths.orderbook_path)
         self._add_row(settings, 2, "SQLite база стакана", "db_path", paths.db_path)
 
-        control = ttk.LabelFrame(main, text="Управление записью", padding=10)
+        control = ttk.LabelFrame(main, text="Главное управление", padding=12)
         control.pack(fill="x", pady=8)
-        ttk.Label(control, textvariable=self.recorder_state_var, font=("Segoe UI", 12, "bold")).pack(side="left", padx=6)
-        ttk.Button(control, text="▶ Запустить запись", command=self.start_recording).pack(side="left", padx=8)
-        ttk.Button(control, text="■ Остановить", command=self.stop_process).pack(side="left", padx=4)
+        ttk.Label(control, textvariable=self.recorder_state_var, font=("Segoe UI", 14, "bold")).pack(side="left", padx=8)
+        ttk.Button(control, text="▶ Запустить запись", style="Primary.TButton", command=self.start_recording).pack(side="left", padx=8)
+        ttk.Button(control, text="■ Остановить", style="Danger.TButton", command=self.stop_process).pack(side="left", padx=4)
         ttk.Button(control, text="Показать стакан", command=lambda: self.run_action("orderbook")).pack(side="left", padx=4)
+        ttk.Button(control, text="Сделать анализ CSV", command=lambda: self.run_action("analyze-orderbook")).pack(side="left", padx=4)
+        ttk.Button(control, text="Экспорт ML JSONL", command=lambda: self.run_action("export-orderbook")).pack(side="left", padx=4)
 
-        status = ttk.LabelFrame(main, text="Статус / момент рынка", padding=8)
+        help_frame = ttk.LabelFrame(main, text="Подсказка по выбранному действию", padding=8)
+        help_frame.pack(fill="x", pady=6)
+        ttk.Label(help_frame, textvariable=self.help_var, wraplength=1040).pack(anchor="w")
+
+        status = ttk.LabelFrame(main, text="Момент рынка", padding=10)
         status.pack(fill="x", pady=8)
         for row, key in enumerate(("db", "quik", "advantage", "pattern", "metrics", "reason")):
             var = tk.StringVar(value="—")
@@ -331,6 +378,25 @@ class CnyrubGui:
     def start_recording(self) -> None:
         self.run_action("record-orderbook")
 
+    def open_path(self, target: str) -> None:
+        if target == "export_dir":
+            path = Path(self._get("orderbook_path") or default_paths().orderbook_path).parent
+        elif target == "project_dir":
+            path = Path.cwd()
+        else:
+            path = Path(target)
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+            self._append_output(f"\n[opened] {path}\n")
+        except Exception as exc:
+            self._append_output(f"\n[error opening {path}] {exc}\n")
+
     def _command_for_action(self, action: str) -> list[str]:
         common = {"secid": self._get("secid")}
         if action == "quote":
@@ -386,6 +452,7 @@ class CnyrubGui:
         command = self._command_for_action(action)
         self.command_var.set(command_to_text(command))
         self.current_action = action
+        self.help_var.set(action_help_text(action))
         self.recorder_state_var.set(recorder_state_line(True, self.current_action))
         self._append_output(f"\n$ {command_to_text(command)}\n")
         thread = threading.Thread(target=self._run_subprocess, args=(command,), daemon=True)

@@ -1,4 +1,12 @@
-from cnyrub_tom.gui import build_cli_command, command_to_text, dashboard_state_lines, default_paths, recorder_state_line
+from cnyrub_tom.gui import (
+    action_help_text,
+    build_cli_command,
+    command_to_text,
+    dashboard_state_lines,
+    default_paths,
+    recorder_state_line,
+    setup_steps,
+)
 from cnyrub_tom.realtime import DashboardState
 
 
@@ -14,6 +22,21 @@ def test_recorder_state_line_is_clear_for_start_stop_buttons():
     assert recorder_state_line(False, None) == "Запись: остановлена"
     assert recorder_state_line(True, "record-orderbook") == "Запись: идет"
     assert recorder_state_line(True, "quote") == "Выполняется: quote"
+
+
+def test_setup_steps_are_operator_friendly_and_quik_first():
+    steps = setup_steps()
+
+    assert steps[0].startswith("1. Запусти QUIK")
+    assert any("QLua" in step for step in steps)
+    assert any("Запустить запись" in step for step in steps)
+
+
+def test_action_help_text_explains_primary_buttons():
+    assert "пишет стакан" in action_help_text("record-orderbook")
+    assert "разово" in action_help_text("orderbook")
+    assert "CSV" in action_help_text("detect-accumulation")
+    assert action_help_text("unknown") == "Выполняет выбранную команду."
 
 
 def test_dashboard_state_lines_translate_backend_state_for_operator():
