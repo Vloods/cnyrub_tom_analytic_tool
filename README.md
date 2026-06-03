@@ -82,6 +82,12 @@ cnyrub
 cnyrub-gui
 ```
 
+Также установщик создаст ярлык на рабочем столе:
+
+```text
+CNYRUB_TOM Analytics
+```
+
 #### Ручная установка
 
 Linux/macOS:

@@ -11,6 +11,7 @@ The script:
   - optionally installs them with winget if available;
   - clones/updates the GitHub repository;
   - installs the package in editable mode;
+  - creates a desktop shortcut for cnyrub-gui;
   - verifies cnyrub and cnyrub-gui entry points.
 #>
 
@@ -164,8 +165,32 @@ function Get-InstalledCommandPath([string]$CommandName) {
     throw "Installed command '$CommandName' was not found. Expected it in: $ScriptsDir"
 }
 
+function New-DesktopShortcut([string]$TargetPath, [string]$ShortcutName, [string]$WorkingDirectory) {
+    $DesktopDir = [System.Environment]::GetFolderPath("DesktopDirectory")
+    if (-not $DesktopDir) {
+        throw "Could not locate Desktop directory for shortcut creation."
+    }
+
+    $ShortcutPath = Join-Path $DesktopDir "$ShortcutName.lnk"
+    $Shell = New-Object -ComObject WScript.Shell
+    $Shortcut = $Shell.CreateShortcut($ShortcutPath)
+    $Shortcut.TargetPath = $TargetPath
+    $Shortcut.WorkingDirectory = $WorkingDirectory
+    $Shortcut.IconLocation = $TargetPath
+    $Shortcut.Description = "Launch CNYRUB_TOM Analytics Tool GUI"
+    $Shortcut.Save()
+
+    if (-not (Test-Path $ShortcutPath)) {
+        throw "Desktop shortcut was not created: $ShortcutPath"
+    }
+    return $ShortcutPath
+}
+
 $CnyrubCmd = Get-InstalledCommandPath "cnyrub"
 $CnyrubGuiCmd = Get-InstalledCommandPath "cnyrub-gui"
+
+Write-Step "Creating desktop shortcut"
+$ShortcutPath = New-DesktopShortcut -TargetPath $CnyrubGuiCmd -ShortcutName "CNYRUB_TOM Analytics" -WorkingDirectory $InstallDir
 
 Write-Step "Verifying CLI commands"
 & $CnyrubCmd --help | Select-String "detect-liquidity-events" | Out-Host
@@ -175,6 +200,7 @@ Write-Step "Installed successfully"
 Write-Host "Project directory: $InstallDir"
 Write-Host "QUIK export directory: $ExportDir"
 Write-Host "Python Scripts directory: $ScriptsDir"
+Write-Host "Desktop shortcut: $ShortcutPath"
 Write-Host "Run GUI with: $CnyrubGuiCmd"
 Write-Host "Run CLI with: $CnyrubCmd quote"
 Write-Host "If plain 'cnyrub' is not recognized in the current window, open a new PowerShell window and run: cnyrub quote"
