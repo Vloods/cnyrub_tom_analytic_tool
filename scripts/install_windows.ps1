@@ -53,25 +53,37 @@ if (-not (Command-Exists "py") -and -not (Command-Exists "python")) {
 $script:PythonExe = $null
 $script:PythonPrefixArgs = @()
 if (Command-Exists "py") {
-    try {
-        py -3.11 --version | Out-Host
+    & py -3.11 --version | Out-Host
+    if ($LASTEXITCODE -eq 0) {
         $script:PythonExe = "py"
         $script:PythonPrefixArgs = @("-3.11")
-    } catch {
-        py -3 --version | Out-Host
-        $script:PythonExe = "py"
-        $script:PythonPrefixArgs = @("-3")
+    } else {
+        & py -3 --version | Out-Host
+        if ($LASTEXITCODE -eq 0) {
+            $script:PythonExe = "py"
+            $script:PythonPrefixArgs = @("-3")
+        }
     }
-} elseif (Command-Exists "python") {
-    python --version | Out-Host
-    $script:PythonExe = "python"
-    $script:PythonPrefixArgs = @()
-} else {
-    throw "Python is not available on PATH."
+}
+if (-not $script:PythonExe -and (Command-Exists "python")) {
+    & python --version | Out-Host
+    if ($LASTEXITCODE -eq 0) {
+        $script:PythonExe = "python"
+        $script:PythonPrefixArgs = @()
+    }
+}
+if (-not $script:PythonExe) {
+    throw "Python 3.11+ is not available on PATH. Install Python 3.11, then rerun this script."
 }
 
 function Invoke-Python([string[]]$PythonArgs) {
-    & $script:PythonExe @script:PythonPrefixArgs @PythonArgs
+    $AllArgs = @()
+    $AllArgs += $script:PythonPrefixArgs
+    $AllArgs += $PythonArgs
+    & $script:PythonExe @AllArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python command failed: $script:PythonExe $($AllArgs -join ' ')"
+    }
 }
 
 Write-Step "Preparing folders"
@@ -95,8 +107,14 @@ Push-Location $InstallDir
 Invoke-Python @("-m", "pip", "install", "--upgrade", "pip")
 Invoke-Python @("-m", "pip", "install", "-e", ".")
 
-$ScriptsDir = (Invoke-Python @("-c", "import sysconfig; print(sysconfig.get_path('scripts'))") | Select-Object -Last 1).Trim()
+$ScriptsDirOutput = @(Invoke-Python @("-c", "import sysconfig; print(sysconfig.get_path('scripts'))"))
+$ScriptsDir = ($ScriptsDirOutput | Where-Object { $_ -and $_.ToString().Trim() } | Select-Object -Last 1)
+if ($ScriptsDir) {
+    $ScriptsDir = $ScriptsDir.ToString().Trim()
+}
 if (-not $ScriptsDir -or -not (Test-Path $ScriptsDir)) {
+    Write-Host "Python scripts directory detection output:" -ForegroundColor Yellow
+    $ScriptsDirOutput | Out-Host
     throw "Could not locate Python Scripts directory after installation."
 }
 
