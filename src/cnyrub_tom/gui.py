@@ -18,6 +18,7 @@ class DefaultPaths:
     db_path: str
     analysis_csv: str
     accumulation_csv: str
+    liquidity_events_csv: str
     trades_csv: str
     trades_analysis_csv: str
     orderbook_jsonl: str
@@ -30,6 +31,7 @@ def default_paths() -> DefaultPaths:
         db_path=str(base / "cnyrub_tom_orderbook.sqlite"),
         analysis_csv=str(base / "cnyrub_tom_analysis.csv"),
         accumulation_csv=str(base / "cnyrub_tom_accumulation_zones.csv"),
+        liquidity_events_csv=str(base / "cnyrub_tom_liquidity_events.csv"),
         trades_csv=str(base / "cnyrub_tom_trades.csv"),
         trades_analysis_csv=str(base / "cnyrub_tom_trades_analysis.csv"),
         orderbook_jsonl=str(base / "cnyrub_tom_orderbook.jsonl"),
@@ -88,6 +90,14 @@ def build_cli_command(action: str, **options: Any) -> list[str]:
         _append_option(command, "--window", options.get("window"))
         _append_option(command, "--max-mid-range", options.get("max_mid_range"))
         _append_option(command, "--min-total-depth", options.get("min_total_depth"))
+        _append_option(command, "--output", options.get("output"))
+    elif action == "detect-liquidity-events":
+        _append_option(command, "--db", options.get("db_path"))
+        _append_option(command, "--trades-csv", options.get("trades_csv"))
+        _append_option(command, "--window-seconds", options.get("window_seconds"))
+        _append_option(command, "--min-trade-qty", options.get("min_trade_qty"))
+        _append_option(command, "--min-recovery-ratio", options.get("min_recovery_ratio"))
+        _append_option(command, "--iceberg-trade-to-visible-ratio", options.get("iceberg_trade_to_visible_ratio"))
         _append_option(command, "--output", options.get("output"))
     else:
         raise ValueError(f"unknown action: {action}")
@@ -164,13 +174,18 @@ class CnyrubGui:
         self._add_row(orderbook_tab, 5, "Окно накопления, снимков", "accumulation_window", "20", width=16)
         self._add_row(orderbook_tab, 6, "Макс. диапазон mid", "max_mid_range", "0.002", width=16)
         self._add_row(orderbook_tab, 7, "Мин. глубина bid+ask", "min_total_depth", "1000", width=16)
+        self._add_row(orderbook_tab, 8, "Окно поглощения, сек", "liquidity_window_seconds", "20", width=16)
+        self._add_row(orderbook_tab, 9, "Мин. объем сделок", "liquidity_min_trade_qty", "100", width=16)
+        self._add_row(orderbook_tab, 10, "Мин. восстановление", "liquidity_min_recovery_ratio", "0.8", width=16)
+        self._add_row(orderbook_tab, 11, "Iceberg сделок/видимый", "iceberg_trade_to_visible_ratio", "1.5", width=16)
         buttons = ttk.Frame(orderbook_tab)
-        buttons.grid(row=8, column=0, columnspan=2, sticky="w", pady=8)
+        buttons.grid(row=12, column=0, columnspan=2, sticky="w", pady=8)
         ttk.Button(buttons, text="Показать стакан", command=lambda: self.run_action("orderbook")).pack(side="left", padx=3)
         ttk.Button(buttons, text="Начать запись", command=lambda: self.run_action("record-orderbook")).pack(side="left", padx=3)
         ttk.Button(buttons, text="Остановить запись", command=self.stop_process).pack(side="left", padx=3)
         ttk.Button(buttons, text="Анализ стакана CSV", command=lambda: self.run_action("analyze-orderbook")).pack(side="left", padx=3)
         ttk.Button(buttons, text="Накопление CSV", command=lambda: self.run_action("detect-accumulation")).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Поглощение/Iceberg CSV", command=lambda: self.run_action("detect-liquidity-events")).pack(side="left", padx=3)
         ttk.Button(buttons, text="Экспорт JSONL", command=lambda: self.run_action("export-orderbook")).pack(side="left", padx=3)
 
         trades_tab = ttk.Frame(tabs, padding=8)
@@ -232,6 +247,14 @@ class CnyrubGui:
                 "detect-accumulation", **common, db_path=self._get("db_path"), levels=self._get("levels"),
                 window=self._get("accumulation_window"), max_mid_range=self._get("max_mid_range"),
                 min_total_depth=self._get("min_total_depth"), output=default_paths().accumulation_csv,
+            )
+        if action == "detect-liquidity-events":
+            return build_cli_command(
+                "detect-liquidity-events", **common, db_path=self._get("db_path"), trades_csv=self._get("trades_csv"),
+                window_seconds=self._get("liquidity_window_seconds"), min_trade_qty=self._get("liquidity_min_trade_qty"),
+                min_recovery_ratio=self._get("liquidity_min_recovery_ratio"),
+                iceberg_trade_to_visible_ratio=self._get("iceberg_trade_to_visible_ratio"),
+                output=default_paths().liquidity_events_csv,
             )
         if action == "export-orderbook":
             return build_cli_command("export-orderbook", **common, db_path=self._get("db_path"), output=default_paths().orderbook_jsonl)

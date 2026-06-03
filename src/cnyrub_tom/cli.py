@@ -6,11 +6,13 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .analysis import summarize_orderbook, summarize_trades
-from .orderflow import AccumulationZone, detect_accumulation_zones
+from .models import Trade
+from .orderflow import AccumulationZone, LiquidityEvent, detect_accumulation_zones, detect_liquidity_events
 from .providers import DEFAULT_SECID, FileOrderBookProvider, HttpJsonOrderBookProvider, MoexIssProvider, ProviderCapabilityError
 from .storage import SnapshotStore
 
@@ -223,6 +225,77 @@ def _detect_accumulation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _liquidity_fieldnames() -> list[str]:
+    return [
+        "kind",
+        "start_ts",
+        "end_ts",
+        "secid",
+        "side",
+        "price",
+        "trade_qty",
+        "trades",
+        "visible_qty_before",
+        "visible_qty_after",
+        "recovery_ratio",
+        "trade_to_visible_ratio",
+        "confidence",
+        "reason",
+    ]
+
+
+def _liquidity_rows(events: list[LiquidityEvent]) -> list[dict[str, Any]]:
+    return [{field: event.to_row()[field] for field in _liquidity_fieldnames()} for event in events]
+
+
+def _load_trades_csv(path: str | Path, secid: str | None = None) -> list[Trade]:
+    trades: list[Trade] = []
+    with Path(path).open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            trade_secid = row.get("secid") or row.get("SECID") or secid or DEFAULT_SECID
+            if secid and trade_secid != secid:
+                continue
+            trades.append(Trade(
+                tradeno=int(float(row.get("tradeno") or row.get("TRADENO") or len(trades) + 1)),
+                secid=trade_secid,
+                ts=datetime.fromisoformat(row.get("ts") or row.get("TRADETIME") or row.get("tradetime") or ""),
+                price=float(row.get("price") or row.get("PRICE") or 0),
+                quantity=float(row.get("quantity") or row.get("QUANTITY") or 0),
+                value=float(row.get("value") or row.get("VALUE") or 0),
+                buysell=row.get("buysell") or row.get("BUYSELL"),
+                boardid=row.get("boardid") or row.get("BOARDID"),
+                source=row.get("source") or "csv-trades",
+            ))
+    return trades
+
+
+def _detect_liquidity_events(args: argparse.Namespace) -> int:
+    books = list(SnapshotStore(args.db).iter_orderbooks(secid=args.secid))
+    trades = _load_trades_csv(args.trades_csv, secid=args.secid)
+    events = detect_liquidity_events(
+        books,
+        trades,
+        window_seconds=args.window_seconds,
+        min_trade_qty=args.min_trade_qty,
+        min_recovery_ratio=args.min_recovery_ratio,
+        iceberg_trade_to_visible_ratio=args.iceberg_trade_to_visible_ratio,
+        price_tolerance=args.price_tolerance,
+    )
+    rows = _liquidity_rows(events)
+    if args.output:
+        path = Path(args.output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=_liquidity_fieldnames())
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"saved {len(rows)} liquidity events to {path}")
+    else:
+        _print_json(rows)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cnyrub", description="CNYRUB_TOM quotes, candles, full orderbook snapshots and analysis")
     parser.add_argument("--secid", default=DEFAULT_SECID)
@@ -289,6 +362,17 @@ def build_parser() -> argparse.ArgumentParser:
     accum.add_argument("--imbalance-threshold", type=float, default=0.25, help="Side imbalance threshold for buy/sell accumulation labels")
     accum.add_argument("--output", help="CSV output path")
     accum.set_defaults(func=_detect_accumulation)
+
+    liq = sub.add_parser("detect-liquidity-events", help="Detect bid/ask absorption and iceberg candidates from trades plus orderbook recovery")
+    liq.add_argument("--db", default="data/orderbook_snapshots.sqlite")
+    liq.add_argument("--trades-csv", required=True, help="CSV with anonymous trades: tradeno,secid,ts,price,quantity,value,buysell")
+    liq.add_argument("--window-seconds", type=float, default=20, help="Orderbook/trade matching window in seconds")
+    liq.add_argument("--min-trade-qty", type=float, default=100, help="Minimum aggressive trade quantity at one best-price level")
+    liq.add_argument("--min-recovery-ratio", type=float, default=0.8, help="Minimum visible size after/before ratio for replenishment")
+    liq.add_argument("--iceberg-trade-to-visible-ratio", type=float, default=1.5, help="Trade/visible-size ratio required for iceberg candidates")
+    liq.add_argument("--price-tolerance", type=float, default=1e-9, help="Float tolerance for matching trade price to best bid/ask")
+    liq.add_argument("--output", help="CSV output path")
+    liq.set_defaults(func=_detect_liquidity_events)
     return parser
 
 

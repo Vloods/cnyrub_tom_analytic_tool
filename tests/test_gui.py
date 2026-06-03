@@ -97,3 +97,35 @@ def test_build_cli_command_for_detect_accumulation():
         "--output",
         "C:\\quik_export\\accumulation_zones.csv",
     ]
+
+
+def test_build_cli_command_for_detect_liquidity_events():
+    command = build_cli_command(
+        "detect-liquidity-events",
+        db_path="C:\\quik_export\\cnyrub_tom_orderbook.sqlite",
+        trades_csv="C:\\quik_export\\cnyrub_tom_trades.csv",
+        output="C:\\quik_export\\liquidity_events.csv",
+        window_seconds=20,
+        min_trade_qty=150,
+        min_recovery_ratio=0.8,
+        iceberg_trade_to_visible_ratio=1.5,
+    )
+
+    assert command == [
+        "cnyrub",
+        "detect-liquidity-events",
+        "--db",
+        "C:\\quik_export\\cnyrub_tom_orderbook.sqlite",
+        "--trades-csv",
+        "C:\\quik_export\\cnyrub_tom_trades.csv",
+        "--window-seconds",
+        "20",
+        "--min-trade-qty",
+        "150",
+        "--min-recovery-ratio",
+        "0.8",
+        "--iceberg-trade-to-visible-ratio",
+        "1.5",
+        "--output",
+        "C:\\quik_export\\liquidity_events.csv",
+    ]

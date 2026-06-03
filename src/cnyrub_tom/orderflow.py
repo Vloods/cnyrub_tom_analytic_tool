@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .analysis import summarize_orderbook
-from .models import OrderBook
+from .models import OrderBook, Trade
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,30 @@ class AccumulationZone:
     avg_ask_qty: float
     avg_total_depth: float
     avg_imbalance: float
+    confidence: float
+    reason: str
+
+    def to_row(self) -> dict[str, str | int | float]:
+        row = asdict(self)
+        row["start_ts"] = self.start_ts.isoformat()
+        row["end_ts"] = self.end_ts.isoformat()
+        return row
+
+
+@dataclass(frozen=True)
+class LiquidityEvent:
+    secid: str
+    kind: str
+    side: str
+    start_ts: datetime
+    end_ts: datetime
+    price: float
+    trade_qty: float
+    trades: int
+    visible_qty_before: float
+    visible_qty_after: float
+    recovery_ratio: float
+    trade_to_visible_ratio: float
     confidence: float
     reason: str
 
@@ -166,10 +190,161 @@ def _zone_from_window(
     )
 
 
+def detect_liquidity_events(
+    books: list[OrderBook],
+    trades: list[Trade],
+    *,
+    window_seconds: float = 20,
+    min_trade_qty: float = 100,
+    min_recovery_ratio: float = 0.8,
+    iceberg_trade_to_visible_ratio: float = 1.5,
+    price_tolerance: float = 1e-9,
+) -> list[LiquidityEvent]:
+    ordered_books = sorted(books, key=lambda item: item.ts)
+    ordered_trades = sorted(trades, key=lambda item: item.ts)
+    events: list[LiquidityEvent] = []
+    seen: set[tuple[str, str, datetime, datetime, float, str]] = set()
+    for side in ("bid", "ask"):
+        for start_index, before in enumerate(ordered_books[:-1]):
+            price_before = _best_price(before, side)
+            visible_before = _best_qty(before, side)
+            if price_before is None or visible_before is None or visible_before <= 0:
+                continue
+            deadline = before.ts + timedelta(seconds=window_seconds)
+            after_candidates = [book for book in ordered_books[start_index + 1:] if book.ts <= deadline]
+            if not after_candidates:
+                continue
+            after = after_candidates[-1]
+            price_after = _best_price(after, side)
+            visible_after = _best_qty(after, side)
+            if price_after is None or visible_after is None:
+                continue
+            if abs(price_after - price_before) > price_tolerance:
+                continue
+            matching_trades = [
+                trade for trade in ordered_trades
+                if trade.secid == before.secid
+                and before.ts <= trade.ts <= after.ts
+                and _trade_hits_side(trade, side)
+                and abs(trade.price - price_before) <= price_tolerance
+            ]
+            trade_qty = sum(trade.quantity for trade in matching_trades)
+            if trade_qty < min_trade_qty:
+                continue
+            recovery_ratio = _clamp(visible_after / visible_before, 0, 1)
+            if recovery_ratio < min_recovery_ratio:
+                continue
+            trade_to_visible_ratio = trade_qty / visible_before
+            base_key = (before.secid, side, before.ts, after.ts, round(price_before, 10))
+            if (*base_key, "absorption") not in seen:
+                events.append(_liquidity_event(
+                    kind=f"{side}_absorption",
+                    side=side,
+                    before=before,
+                    after=after,
+                    price=price_before,
+                    trade_qty=trade_qty,
+                    trade_count=len(matching_trades),
+                    visible_before=visible_before,
+                    visible_after=visible_after,
+                    recovery_ratio=recovery_ratio,
+                    trade_to_visible_ratio=trade_to_visible_ratio,
+                    confidence=_absorption_confidence(trade_qty, visible_before, recovery_ratio, min_trade_qty),
+                    reason=_absorption_reason(side),
+                ))
+                seen.add((*base_key, "absorption"))
+            if trade_to_visible_ratio >= iceberg_trade_to_visible_ratio and (*base_key, "iceberg") not in seen:
+                events.append(_liquidity_event(
+                    kind=f"{side}_iceberg_candidate",
+                    side=side,
+                    before=before,
+                    after=after,
+                    price=price_before,
+                    trade_qty=trade_qty,
+                    trade_count=len(matching_trades),
+                    visible_before=visible_before,
+                    visible_after=visible_after,
+                    recovery_ratio=recovery_ratio,
+                    trade_to_visible_ratio=trade_to_visible_ratio,
+                    confidence=_iceberg_confidence(trade_to_visible_ratio, recovery_ratio, iceberg_trade_to_visible_ratio),
+                    reason=f"repeated aggressive trades exceed visible {side} size while the price level replenishes",
+                ))
+                seen.add((*base_key, "iceberg"))
+    return sorted(events, key=lambda item: (item.start_ts, item.side, item.kind))
+
+
 def _as_float(value: object) -> float | None:
     if value is None:
         return None
-    return float(value)
+    return float(value)  # type: ignore[arg-type]
+
+
+def _best_price(book: OrderBook, side: str) -> float | None:
+    levels = book.bids if side == "bid" else book.asks
+    return levels[0].price if levels else None
+
+
+def _best_qty(book: OrderBook, side: str) -> float | None:
+    levels = book.bids if side == "bid" else book.asks
+    return levels[0].quantity if levels else None
+
+
+def _trade_hits_side(trade: Trade, side: str) -> bool:
+    marker = (trade.buysell or "").strip().upper()
+    if side == "bid":
+        return marker in {"S", "SELL", "SELLER", "SHORT"}
+    return marker in {"B", "BUY", "BUYER", "LONG"}
+
+
+def _liquidity_event(
+    *,
+    kind: str,
+    side: str,
+    before: OrderBook,
+    after: OrderBook,
+    price: float,
+    trade_qty: float,
+    trade_count: int,
+    visible_before: float,
+    visible_after: float,
+    recovery_ratio: float,
+    trade_to_visible_ratio: float,
+    confidence: float,
+    reason: str,
+) -> LiquidityEvent:
+    return LiquidityEvent(
+        secid=before.secid,
+        kind=kind,
+        side=side,
+        start_ts=before.ts,
+        end_ts=after.ts,
+        price=round(price, 10),
+        trade_qty=round(trade_qty, 10),
+        trades=trade_count,
+        visible_qty_before=round(visible_before, 10),
+        visible_qty_after=round(visible_after, 10),
+        recovery_ratio=round(recovery_ratio, 4),
+        trade_to_visible_ratio=round(trade_to_visible_ratio, 4),
+        confidence=round(confidence, 4),
+        reason=reason,
+    )
+
+
+def _absorption_reason(side: str) -> str:
+    if side == "bid":
+        return "sell trades hit bid, but bid price holds and visible bid depth recovers"
+    return "buy trades lift ask, but ask price holds and visible ask depth recovers"
+
+
+def _absorption_confidence(trade_qty: float, visible_before: float, recovery_ratio: float, min_trade_qty: float) -> float:
+    trade_score = _clamp(trade_qty / max(min_trade_qty * 2, 1), 0, 1)
+    visible_score = _clamp(trade_qty / max(visible_before * 2, 1), 0, 1)
+    return _clamp(0.45 * trade_score + 0.35 * recovery_ratio + 0.20 * visible_score, 0, 1)
+
+
+def _iceberg_confidence(trade_to_visible_ratio: float, recovery_ratio: float, threshold: float) -> float:
+    excess_score = _clamp((trade_to_visible_ratio - threshold) / max(threshold, 1), 0, 1)
+    return _clamp(0.55 * recovery_ratio + 0.45 * excess_score, 0, 1)
 
 
 def _non_none(values: list[float | None]) -> list[float]:
