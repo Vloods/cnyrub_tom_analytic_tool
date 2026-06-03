@@ -184,6 +184,22 @@ cnyrub candles --from 2026-06-03 --till 2026-06-03 --interval 60 --output data/c
 cnyrub trades --from 2026-06-03 --till 2026-06-03 --limit 1000 --output data/trades_2026-06-03.csv
 ```
 
+Live-сборщик сделок для автоматического обновления cluster delta:
+
+```bash
+cnyrub record-trades \
+  --limit 1000 \
+  --output C:\\quik_export\\cnyrub_tom_trades.csv \
+  --interval 1.0
+```
+
+Он опрашивает MOEX ISS, дописывает в CSV только новые `tradeno` и не дублирует уже сохраненные сделки. В GUI это кнопки:
+
+```text
+Сделки MOEX → ▶ Live сделки
+Сделки MOEX → ■ Stop сделки
+```
+
 Агрегированный анализ сделок:
 
 ```bash
@@ -224,7 +240,7 @@ Live-вариант прямо в окне:
 Сделки MOEX → ■ Stop Live
 ```
 
-Сначала нажми `Сохранить сделки CSV`, потом `▶ Live Cluster`. Если CSV обновляется новым сборщиком сделок, окно будет перерисовываться автоматически.
+Теперь можно нажать `▶ Live сделки`, затем `▶ Live Cluster`: CSV будет пополняться автоматически, а live cluster delta будет перерисовываться из обновляемого файла.
 
 Метрики анализа сделок:
 

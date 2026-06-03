@@ -21,7 +21,8 @@ def test_default_paths_are_windows_friendly():
 
 def test_recorder_state_line_is_clear_for_start_stop_buttons():
     assert recorder_state_line(False, None) == "Запись: остановлена"
-    assert recorder_state_line(True, "record-orderbook") == "Запись: идет"
+    assert recorder_state_line(True, "record-orderbook") == "Запись стакана: идет"
+    assert recorder_state_line(True, "record-trades") == "Запись сделок: идет"
     assert recorder_state_line(True, "quote") == "Выполняется: quote"
 
 
@@ -39,6 +40,7 @@ def test_action_help_text_explains_primary_buttons():
     assert "CSV" in action_help_text("detect-accumulation")
     assert "3-минут" in action_help_text("cluster-delta")
     assert "автообнов" in action_help_text("live-cluster-delta")
+    assert "сделки" in action_help_text("record-trades")
     assert action_help_text("unknown") == "Выполняет выбранную команду."
 
 
@@ -165,6 +167,28 @@ def test_build_cli_command_for_detect_accumulation():
         "1000",
         "--output",
         "C:\\quik_export\\accumulation_zones.csv",
+    ]
+
+
+def test_build_cli_command_for_record_trades_live_csv():
+    command = build_cli_command(
+        "record-trades",
+        output="C:\\quik_export\\cnyrub_tom_trades.csv",
+        limit=1000,
+        interval=1.0,
+        count=None,
+        seconds=None,
+    )
+
+    assert command == [
+        "cnyrub",
+        "record-trades",
+        "--limit",
+        "1000",
+        "--output",
+        "C:\\quik_export\\cnyrub_tom_trades.csv",
+        "--interval",
+        "1.0",
     ]
 
 

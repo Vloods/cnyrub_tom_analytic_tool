@@ -73,6 +73,14 @@ def build_cli_command(action: str, **options: Any) -> list[str]:
         _append_option(command, "--till", options.get("till"))
         _append_option(command, "--limit", options.get("limit"))
         _append_option(command, "--output", options.get("output"))
+    elif action == "record-trades":
+        _append_option(command, "--from", options.get("from_date"))
+        _append_option(command, "--till", options.get("till"))
+        _append_option(command, "--limit", options.get("limit"))
+        _append_option(command, "--output", options.get("output"))
+        _append_option(command, "--interval", options.get("interval"))
+        _append_option(command, "--count", options.get("count"))
+        _append_option(command, "--seconds", options.get("seconds"))
     elif action == "cluster-delta":
         _append_option(command, "--trades-csv", options.get("trades_csv"))
         _append_option(command, "--from", options.get("from_date"))
@@ -153,7 +161,9 @@ def recorder_state_line(is_running: bool, current_action: str | None) -> str:
     if not is_running:
         return "Запись: остановлена"
     if current_action == "record-orderbook":
-        return "Запись: идет"
+        return "Запись стакана: идет"
+    if current_action == "record-trades":
+        return "Запись сделок: идет"
     return f"Выполняется: {current_action or 'команда'}"
 
 
@@ -177,6 +187,7 @@ def action_help_text(action: str) -> str:
         "export-orderbook": "Экспортирует сырую историю стакана в JSONL для дальнейшей обработки.",
         "quote": "Проверяет текущую котировку через MOEX ISS.",
         "trades": "Сохраняет обезличенные сделки MOEX в CSV.",
+        "record-trades": "Запускает live-сбор сделок MOEX: регулярно дописывает только новые сделки в CSV для live cluster delta.",
         "analyze-trades": "Считает VWAP, объем и buy/sell imbalance по сделкам.",
         "cluster-delta": "Строит 3-минутный кластер-дельта график по ценам: покупки минус продажи, объем и число сделок.",
         "live-cluster-delta": "Включает автообновление 3-минутного cluster delta с начала торговой сессии прямо в окне по CSV сделок.",
@@ -338,20 +349,23 @@ class CnyrubGui:
         self._add_row(trades_tab, 2, "Лимит сделок", "trades_limit", "1000", width=16)
         self._add_row(trades_tab, 3, "CSV сделок", "trades_csv", paths.trades_csv)
         self._add_row(trades_tab, 4, "CSV анализа сделок", "trades_analysis_csv", paths.trades_analysis_csv)
-        self._add_row(trades_tab, 5, "Шаг цены кластера", "cluster_price_step", "0.001", width=16)
-        self._add_row(trades_tab, 6, "CSV cluster delta 3m", "cluster_delta_csv", paths.cluster_delta_csv)
+        self._add_row(trades_tab, 5, "Интервал live сделок, сек", "trades_record_interval", "1.0", width=16)
+        self._add_row(trades_tab, 6, "Шаг цены кластера", "cluster_price_step", "0.001", width=16)
+        self._add_row(trades_tab, 7, "CSV cluster delta 3m", "cluster_delta_csv", paths.cluster_delta_csv)
         trade_buttons = ttk.Frame(trades_tab)
-        trade_buttons.grid(row=7, column=0, columnspan=2, sticky="w", pady=8)
+        trade_buttons.grid(row=8, column=0, columnspan=2, sticky="w", pady=8)
         ttk.Button(trade_buttons, text="Показать сделки", command=lambda: self.run_action("trades-preview")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Сохранить сделки CSV", command=lambda: self.run_action("trades")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Показать анализ", command=lambda: self.run_action("analyze-trades-preview")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Сохранить анализ CSV", command=lambda: self.run_action("analyze-trades")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Cluster Delta 3m", command=lambda: self.run_action("cluster-delta")).pack(side="left", padx=3)
+        ttk.Button(trade_buttons, text="▶ Live сделки", command=self.start_recording_trades).pack(side="left", padx=3)
+        ttk.Button(trade_buttons, text="■ Stop сделки", command=self.stop_process).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="▶ Live Cluster", command=self.start_live_cluster_delta).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="■ Stop Live", command=self.stop_live_cluster_delta).pack(side="left", padx=3)
 
         live_frame = ttk.LabelFrame(trades_tab, text="Live Cluster Delta 3m", padding=8)
-        live_frame.grid(row=8, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
+        live_frame.grid(row=9, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
         ttk.Label(live_frame, textvariable=self.live_cluster_delta_summary_var).pack(anchor="w")
         self.live_cluster_delta_text = tk.Text(live_frame, wrap="none", height=14, width=110)
         self.live_cluster_delta_text.pack(fill="x", expand=True, pady=4)
@@ -405,6 +419,9 @@ class CnyrubGui:
 
     def start_recording(self) -> None:
         self.run_action("record-orderbook")
+
+    def start_recording_trades(self) -> None:
+        self.run_action("record-trades")
 
     def start_live_cluster_delta(self) -> None:
         self.live_cluster_delta_enabled = True
@@ -492,6 +509,11 @@ class CnyrubGui:
             return build_cli_command(
                 "trades", **common, from_date=self._get("from_date"), till=self._get("till"), limit=self._get("trades_limit"),
                 output="" if action.endswith("preview") else self._get("trades_csv"),
+            )
+        if action == "record-trades":
+            return build_cli_command(
+                "record-trades", **common, from_date=self._get("from_date"), till=self._get("till"), limit=self._get("trades_limit"),
+                output=self._get("trades_csv"), interval=self._get("trades_record_interval"),
             )
         if action in {"analyze-trades", "analyze-trades-preview"}:
             return build_cli_command(

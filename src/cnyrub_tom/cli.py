@@ -66,6 +66,10 @@ def _candles(args: argparse.Namespace) -> int:
     return 0
 
 
+def _trade_fieldnames() -> list[str]:
+    return ["tradeno", "secid", "ts", "price", "quantity", "value", "buysell", "boardid", "source"]
+
+
 def _trade_rows(trades: list[Any]) -> list[dict[str, Any]]:
     return [{
         "tradeno": trade.tradeno,
@@ -87,13 +91,64 @@ def _trades(args: argparse.Namespace) -> int:
         path = Path(args.output)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", newline="", encoding="utf-8") as handle:
-            fieldnames = ["tradeno", "secid", "ts", "price", "quantity", "value", "buysell", "boardid", "source"]
-            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer = csv.DictWriter(handle, fieldnames=_trade_fieldnames())
             writer.writeheader()
             writer.writerows(rows)
         print(f"saved {len(rows)} anonymous trades to {path}")
     else:
         _print_json(rows)
+    return 0
+
+
+def _ensure_trade_csv(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.stat().st_size > 0:
+        return
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=_trade_fieldnames())
+        writer.writeheader()
+
+
+def _existing_trade_numbers(path: Path) -> set[int]:
+    if not path.exists() or path.stat().st_size == 0:
+        return set()
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        return {int(float(row["tradeno"])) for row in csv.DictReader(handle) if row.get("tradeno")}
+
+
+def _append_new_trade_rows(path: Path, trades: list[Trade], seen: set[int]) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new_trades = [trade for trade in sorted(trades, key=lambda item: (item.ts, item.tradeno)) if trade.tradeno not in seen]
+    if not new_trades:
+        return 0
+    write_header = not path.exists() or path.stat().st_size == 0
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=_trade_fieldnames())
+        if write_header:
+            writer.writeheader()
+        rows = _trade_rows(new_trades)
+        writer.writerows(rows)
+    seen.update(trade.tradeno for trade in new_trades)
+    return len(new_trades)
+
+
+def _record_trades(args: argparse.Namespace) -> int:
+    provider = MoexIssProvider()
+    path = Path(args.output)
+    _ensure_trade_csv(path)
+    seen = _existing_trade_numbers(path)
+    deadline = None if args.seconds is None else time.monotonic() + args.seconds
+    polls = 0
+    while True:
+        trades = provider.get_trades(args.secid, from_=args.from_date, till=args.till, limit=args.limit)
+        saved = _append_new_trade_rows(path, trades, seen)
+        polls += 1
+        print(f"saved {saved} new anonymous trades to {path} (seen={len(seen)})")
+        if args.count is not None and polls >= args.count:
+            break
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        time.sleep(args.interval)
     return 0
 
 
@@ -369,6 +424,16 @@ def build_parser() -> argparse.ArgumentParser:
     trades.add_argument("--limit", type=int, default=100)
     trades.add_argument("--output", help="CSV output path")
     trades.set_defaults(func=_trades)
+
+    record_trades = sub.add_parser("record-trades", help="Poll MOEX anonymous trades and append only new trades to CSV")
+    record_trades.add_argument("--from", dest="from_date", help="YYYY-MM-DD")
+    record_trades.add_argument("--till", help="YYYY-MM-DD")
+    record_trades.add_argument("--limit", type=int, default=1000, help="Trades requested on each poll")
+    record_trades.add_argument("--output", required=True, help="Append-only CSV output path")
+    record_trades.add_argument("--interval", type=float, default=1.0, help="Polling interval in seconds")
+    record_trades.add_argument("--count", type=int, help="Number of polling iterations")
+    record_trades.add_argument("--seconds", type=float, help="Stop after this many seconds")
+    record_trades.set_defaults(func=_record_trades)
 
     trades_ana = sub.add_parser("analyze-trades", help="Compute VWAP/volume/side imbalance from MOEX anonymous trades")
     trades_ana.add_argument("--from", dest="from_date", help="YYYY-MM-DD")
