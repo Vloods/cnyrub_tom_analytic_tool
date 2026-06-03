@@ -137,6 +137,14 @@ _PATTERN_LABELS = {
 }
 
 
+def recorder_state_line(is_running: bool, current_action: str | None) -> str:
+    if not is_running:
+        return "Запись: остановлена"
+    if current_action == "record-orderbook":
+        return "Запись: идет"
+    return f"Выполняется: {current_action or 'команда'}"
+
+
 def dashboard_state_lines(state: DashboardState) -> dict[str, str]:
     db_label = {
         "connected": "подключена",
@@ -178,11 +186,14 @@ class CnyrubGui:
         self.root.geometry("1040x760")
         self.output_queue: queue.Queue[str] = queue.Queue()
         self.process: subprocess.Popen[str] | None = None
+        self.current_action: str | None = None
         self.fields: dict[str, tk.StringVar] = {}
         self.status_vars: dict[str, tk.StringVar] = {}
+        self.recorder_state_var = tk.StringVar(value=recorder_state_line(False, None))
         self._build_ui()
         self.root.after(100, self._drain_output_queue)
         self.root.after(250, self._refresh_dashboard_state)
+        self.root.after(250, self._refresh_recorder_state)
 
     def _var(self, name: str, value: str = ""):
         var = self.tk.StringVar(value=value)
@@ -214,6 +225,13 @@ class CnyrubGui:
         self._add_row(settings, 0, "SECID", "secid", DEFAULT_SECID)
         self._add_row(settings, 1, "QUIK JSON стакана", "orderbook_path", paths.orderbook_path)
         self._add_row(settings, 2, "SQLite база стакана", "db_path", paths.db_path)
+
+        control = ttk.LabelFrame(main, text="Управление записью", padding=10)
+        control.pack(fill="x", pady=8)
+        ttk.Label(control, textvariable=self.recorder_state_var, font=("Segoe UI", 12, "bold")).pack(side="left", padx=6)
+        ttk.Button(control, text="▶ Запустить запись", command=self.start_recording).pack(side="left", padx=8)
+        ttk.Button(control, text="■ Остановить", command=self.stop_process).pack(side="left", padx=4)
+        ttk.Button(control, text="Показать стакан", command=lambda: self.run_action("orderbook")).pack(side="left", padx=4)
 
         status = ttk.LabelFrame(main, text="Статус / момент рынка", padding=8)
         status.pack(fill="x", pady=8)
@@ -305,6 +323,14 @@ class CnyrubGui:
         finally:
             self.root.after(1000, self._refresh_dashboard_state)
 
+    def _refresh_recorder_state(self) -> None:
+        is_running = bool(self.process and self.process.poll() is None)
+        self.recorder_state_var.set(recorder_state_line(is_running, self.current_action))
+        self.root.after(500, self._refresh_recorder_state)
+
+    def start_recording(self) -> None:
+        self.run_action("record-orderbook")
+
     def _command_for_action(self, action: str) -> list[str]:
         common = {"secid": self._get("secid")}
         if action == "quote":
@@ -359,6 +385,8 @@ class CnyrubGui:
             return
         command = self._command_for_action(action)
         self.command_var.set(command_to_text(command))
+        self.current_action = action
+        self.recorder_state_var.set(recorder_state_line(True, self.current_action))
         self._append_output(f"\n$ {command_to_text(command)}\n")
         thread = threading.Thread(target=self._run_subprocess, args=(command,), daemon=True)
         thread.start()
@@ -375,11 +403,16 @@ class CnyrubGui:
             self.output_queue.put(f"\n[error] {exc}\n")
         finally:
             self.process = None
+            self.current_action = None
 
     def stop_process(self) -> None:
         if self.process and self.process.poll() is None:
             self.process.terminate()
             self._append_output("\n[requested stop]\n")
+        else:
+            self._append_output("\n[recording already stopped]\n")
+        self.current_action = None
+        self.recorder_state_var.set(recorder_state_line(False, None))
 
     def copy_command(self) -> None:
         self.root.clipboard_clear()

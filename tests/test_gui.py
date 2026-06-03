@@ -1,4 +1,4 @@
-from cnyrub_tom.gui import build_cli_command, command_to_text, dashboard_state_lines, default_paths
+from cnyrub_tom.gui import build_cli_command, command_to_text, dashboard_state_lines, default_paths, recorder_state_line
 from cnyrub_tom.realtime import DashboardState
 
 
@@ -8,6 +8,12 @@ def test_default_paths_are_windows_friendly():
     assert paths.orderbook_path.endswith("cnyrub_tom_orderbook.json")
     assert paths.db_path.endswith("cnyrub_tom_orderbook.sqlite")
     assert paths.analysis_csv.endswith("cnyrub_tom_analysis.csv")
+
+
+def test_recorder_state_line_is_clear_for_start_stop_buttons():
+    assert recorder_state_line(False, None) == "Запись: остановлена"
+    assert recorder_state_line(True, "record-orderbook") == "Запись: идет"
+    assert recorder_state_line(True, "quote") == "Выполняется: quote"
 
 
 def test_dashboard_state_lines_translate_backend_state_for_operator():
