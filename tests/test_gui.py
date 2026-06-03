@@ -1,4 +1,5 @@
-from cnyrub_tom.gui import build_cli_command, command_to_text, default_paths
+from cnyrub_tom.gui import build_cli_command, command_to_text, dashboard_state_lines, default_paths
+from cnyrub_tom.realtime import DashboardState
 
 
 def test_default_paths_are_windows_friendly():
@@ -7,6 +8,42 @@ def test_default_paths_are_windows_friendly():
     assert paths.orderbook_path.endswith("cnyrub_tom_orderbook.json")
     assert paths.db_path.endswith("cnyrub_tom_orderbook.sqlite")
     assert paths.analysis_csv.endswith("cnyrub_tom_analysis.csv")
+
+
+def test_dashboard_state_lines_translate_backend_state_for_operator():
+    state = DashboardState(
+        db_status="connected",
+        db_error=None,
+        db_path="C:/quik_export/cnyrub_tom_orderbook.sqlite",
+        snapshot_count=12500,
+        latest_snapshot_id=12500,
+        latest_snapshot_ts="2026-06-03T10:00:00+00:00",
+        last_snapshot_age_sec=0.4,
+        quik_status="active",
+        quik_path="C:/quik_export/cnyrub_tom_orderbook.json",
+        quik_age_sec=0.2,
+        secid="CNYRUB_TOM",
+        best_bid=12.34,
+        best_ask=12.35,
+        spread=0.01,
+        mid=12.345,
+        bid_qty=9000,
+        ask_qty=3000,
+        imbalance=0.5,
+        advantage="buyer",
+        pattern="buyer_accumulation",
+        confidence=0.72,
+        explanation=["bid depth выше ask depth", "цена стоит в узком диапазоне"],
+    )
+
+    lines = dashboard_state_lines(state)
+
+    assert lines["db"].startswith("База: подключена")
+    assert "12 500" in lines["db"]
+    assert lines["quik"].startswith("QUIK: активен")
+    assert lines["advantage"] == "Преимущество: покупатель"
+    assert lines["pattern"] == "Момент: набор позиции покупателем · 72%"
+    assert "Imbalance: +0.500" in lines["metrics"]
 
 
 def test_build_cli_command_for_orderbook_includes_quik_file_levels_and_depth():

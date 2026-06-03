@@ -12,6 +12,8 @@ CLI-инструмент для котировок, свечей, записи �
 - Скачивать исторические свечи MOEX ISS в CSV.
 - Получать обезличенные сделки MOEX ISS и считать по ним VWAP/объем/агрессорный imbalance.
 - Запускать удобный desktop GUI без внешних зависимостей через `cnyrub-gui`.
+- Показывать в GUI статус SQLite-базы, свежесть QUIK JSON, преимущество покупок/продаж, imbalance и текущий паттерн момента.
+- Готовить ML-ready датасеты из записанного стакана: features по глубине стакана и labels будущего движения mid-price.
 - Читать полный стакан из:
   - локального JSON-файла, который пишет QUIK/QLua;
   - внешнего HTTP/JSON endpoint брокера или рыночного фида.
@@ -119,6 +121,14 @@ cnyrub-gui
 - `Стакан / QUIK` — посмотреть текущий стакан из `C:\quik_export\cnyrub_tom_orderbook.json`, запустить/остановить запись в SQLite, сделать CSV-анализ, найти зоны накопления объема, найти поглощение/Iceberg-кандидатов и сделать JSONL-экспорт;
 - `Сделки MOEX` — показать обезличенные сделки, сохранить их в CSV, посчитать VWAP/объем/side imbalance;
 - `Свечи` — скачать свечи MOEX ISS в CSV.
+
+В верхнем блоке `Статус / момент рынка` GUI автоматически обновляет:
+
+- статус SQLite-базы и количество snapshots;
+- свежесть QUIK JSON-файла;
+- bid/ask depth, spread и imbalance;
+- преимущество покупателя/продавца;
+- текущий паттерн момента: набор позиции покупателем/продавцом, давление, импульс или баланс.
 
 GUI показывает точную CLI-команду, которую запускает, и позволяет скопировать её для ручного запуска.
 
@@ -364,6 +374,31 @@ cnyrub export-orderbook `
 ```
 
 JSONL удобен для последующей обработки в Python, pandas, ClickHouse или других системах.
+
+### 9. Подготовить датасет для будущего обучения модели
+
+После накопления истории стакана можно отдельно выгрузить признаки и метки будущего движения mid-price.
+
+Features:
+
+```powershell
+cnyrub export-features `
+  --db C:\quik_export\cnyrub_tom_orderbook.sqlite `
+  --levels 1,5,10 `
+  --output C:\quik_export\cnyrub_tom_features.csv
+```
+
+Labels на горизонт 5 секунд:
+
+```powershell
+cnyrub export-labels `
+  --db C:\quik_export\cnyrub_tom_orderbook.sqlite `
+  --horizon-seconds 5 `
+  --flat-threshold 0.0005 `
+  --output C:\quik_export\cnyrub_tom_labels_5s.csv
+```
+
+Это первый слой ML pipeline: сырые snapshots остаются в SQLite, а `features`/`labels` можно объединять для обучения модели.
 
 ### Примечание по объемам QUIK
 

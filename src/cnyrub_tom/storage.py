@@ -69,13 +69,53 @@ class SnapshotStore:
         query += " order by ts, id"
         with self._connect() as conn:
             for snapshot_id, item_secid, ts, source in conn.execute(query, params):
-                levels = conn.execute(
-                    "select side, price, quantity from orderbook_levels where snapshot_id = ? order by side, position",
-                    (snapshot_id,),
-                ).fetchall()
-                bids = [OrderLevel(price=price, quantity=quantity) for side, price, quantity in levels if side == "bid"]
-                asks = [OrderLevel(price=price, quantity=quantity) for side, price, quantity in levels if side == "ask"]
-                yield OrderBook(secid=item_secid, ts=datetime.fromisoformat(ts), bids=bids, asks=asks, source=source)
+                yield self._orderbook_from_row(conn, snapshot_id, item_secid, ts, source)
+
+    def snapshot_count(self, secid: str | None = None) -> int:
+        query = "select count(*) from orderbook_snapshots"
+        params: tuple[str, ...] = ()
+        if secid:
+            query += " where secid = ?"
+            params = (secid,)
+        with self._connect() as conn:
+            return int(conn.execute(query, params).fetchone()[0])
+
+    def latest_snapshot_meta(self, secid: str | None = None) -> tuple[int, str, datetime] | None:
+        query = "select id, secid, ts from orderbook_snapshots"
+        params: tuple[str, ...] = ()
+        if secid:
+            query += " where secid = ?"
+            params = (secid,)
+        query += " order by ts desc, id desc limit 1"
+        with self._connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        if row is None:
+            return None
+        snapshot_id, item_secid, ts = row
+        return int(snapshot_id), str(item_secid), datetime.fromisoformat(ts)
+
+    def latest_orderbooks(self, *, limit: int = 20, secid: str | None = None) -> list[OrderBook]:
+        query = "select id, secid, ts, source from orderbook_snapshots"
+        params: tuple[str | int, ...]
+        if secid:
+            query += " where secid = ?"
+            params = (secid, limit)
+        else:
+            params = (limit,)
+        query += " order by ts desc, id desc limit ?"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+            books = [self._orderbook_from_row(conn, snapshot_id, item_secid, ts, source) for snapshot_id, item_secid, ts, source in rows]
+        return list(reversed(books))
+
+    def _orderbook_from_row(self, conn: sqlite3.Connection, snapshot_id: int, item_secid: str, ts: str, source: str) -> OrderBook:
+        levels = conn.execute(
+            "select side, price, quantity from orderbook_levels where snapshot_id = ? order by side, position",
+            (snapshot_id,),
+        ).fetchall()
+        bids = [OrderLevel(price=price, quantity=quantity) for side, price, quantity in levels if side == "bid"]
+        asks = [OrderLevel(price=price, quantity=quantity) for side, price, quantity in levels if side == "ask"]
+        return OrderBook(secid=item_secid, ts=datetime.fromisoformat(ts), bids=bids, asks=asks, source=source)
 
     def export_jsonl(self, output: str | Path, secid: str | None = None) -> int:
         output = Path(output)

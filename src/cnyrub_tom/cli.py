@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .analysis import summarize_orderbook, summarize_trades
+from .dataset import build_feature_rows, build_label_rows
 from .models import Trade
 from .orderflow import AccumulationZone, LiquidityEvent, detect_accumulation_zones, detect_liquidity_events
 from .providers import DEFAULT_SECID, FileOrderBookProvider, HttpJsonOrderBookProvider, MoexIssProvider, ProviderCapabilityError
@@ -296,6 +297,39 @@ def _detect_liquidity_events(args: argparse.Namespace) -> int:
     return 0
 
 
+def _write_csv(path_value: str | Path, rows: list[dict[str, Any]], *, fallback_fieldnames: list[str]) -> None:
+    path = Path(path_value)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(rows[0].keys()) if rows else fallback_fieldnames
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _parse_levels(value: str) -> tuple[int, ...]:
+    levels = tuple(int(part.strip()) for part in value.split(",") if part.strip())
+    if not levels:
+        raise argparse.ArgumentTypeError("levels must contain at least one integer")
+    return levels
+
+
+def _export_features(args: argparse.Namespace) -> int:
+    books = list(SnapshotStore(args.db).iter_orderbooks(secid=args.secid))
+    rows = build_feature_rows(books, levels=args.levels)
+    _write_csv(args.output, rows, fallback_fieldnames=["secid", "ts"])
+    print(f"saved {len(rows)} feature rows to {args.output}")
+    return 0
+
+
+def _export_labels(args: argparse.Namespace) -> int:
+    books = list(SnapshotStore(args.db).iter_orderbooks(secid=args.secid))
+    rows = build_label_rows(books, horizon_seconds=args.horizon_seconds, flat_threshold=args.flat_threshold)
+    _write_csv(args.output, rows, fallback_fieldnames=["secid", "ts", "horizon_sec", "label"])
+    print(f"saved {len(rows)} label rows to {args.output}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cnyrub", description="CNYRUB_TOM quotes, candles, full orderbook snapshots and analysis")
     parser.add_argument("--secid", default=DEFAULT_SECID)
@@ -373,6 +407,19 @@ def build_parser() -> argparse.ArgumentParser:
     liq.add_argument("--price-tolerance", type=float, default=1e-9, help="Float tolerance for matching trade price to best bid/ask")
     liq.add_argument("--output", help="CSV output path")
     liq.set_defaults(func=_detect_liquidity_events)
+
+    features = sub.add_parser("export-features", help="Export ML-ready orderbook feature rows from recorded snapshots")
+    features.add_argument("--db", default="data/orderbook_snapshots.sqlite")
+    features.add_argument("--levels", type=_parse_levels, default=(1, 5, 10), help="Comma-separated depth levels, e.g. 1,5,10")
+    features.add_argument("--output", required=True, help="CSV output path")
+    features.set_defaults(func=_export_features)
+
+    labels = sub.add_parser("export-labels", help="Export future mid-price direction labels for ML training")
+    labels.add_argument("--db", default="data/orderbook_snapshots.sqlite")
+    labels.add_argument("--horizon-seconds", type=int, default=5)
+    labels.add_argument("--flat-threshold", type=float, default=0.0)
+    labels.add_argument("--output", required=True, help="CSV output path")
+    labels.set_defaults(func=_export_labels)
     return parser
 
 

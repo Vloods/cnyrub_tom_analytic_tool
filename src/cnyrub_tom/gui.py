@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .realtime import DashboardState, build_dashboard_state
+
 DEFAULT_SECID = "CNYRUB_TOM"
 
 
@@ -114,6 +116,56 @@ def command_to_text(command: list[str]) -> str:
     return " ".join(parts)
 
 
+_ADVANTAGE_LABELS = {
+    "buyer": "покупатель",
+    "seller": "продавец",
+    "balance": "баланс",
+    "unknown": "нет данных",
+}
+
+_PATTERN_LABELS = {
+    "buyer_accumulation": "набор позиции покупателем",
+    "seller_accumulation": "набор позиции продавцом",
+    "buyer_pressure": "давление покупателя",
+    "seller_pressure": "давление продавца",
+    "up_impulse": "импульс вверх",
+    "down_impulse": "импульс вниз",
+    "up_move": "движение вверх",
+    "down_move": "движение вниз",
+    "balance": "баланс / ожидание",
+    "no_data": "нет данных",
+}
+
+
+def dashboard_state_lines(state: DashboardState) -> dict[str, str]:
+    db_label = {
+        "connected": "подключена",
+        "missing": "файл не найден",
+        "error": "ошибка",
+    }.get(state.db_status, state.db_status)
+    quik_label = {
+        "active": "активен",
+        "stale": "нет свежих данных",
+        "missing": "файл не найден",
+        "not_configured": "не настроен",
+    }.get(state.quik_status, state.quik_status)
+    age = "—" if state.last_snapshot_age_sec is None else f"{state.last_snapshot_age_sec:.1f} сек назад"
+    quik_age = "—" if state.quik_age_sec is None else f"{state.quik_age_sec:.1f} сек назад"
+    imbalance = "—" if state.imbalance is None else f"{state.imbalance:+.3f}"
+    bid_qty = "—" if state.bid_qty is None else f"{state.bid_qty:,.0f}".replace(",", " ")
+    ask_qty = "—" if state.ask_qty is None else f"{state.ask_qty:,.0f}".replace(",", " ")
+    spread = "—" if state.spread is None else f"{state.spread:.6g}"
+    confidence = round(state.confidence * 100)
+    return {
+        "db": f"База: {db_label} · snapshots: {state.snapshot_count:,}".replace(",", " ") + f" · последний: {age}",
+        "quik": f"QUIK: {quik_label} · JSON: {quik_age}",
+        "advantage": f"Преимущество: {_ADVANTAGE_LABELS.get(state.advantage, state.advantage)}",
+        "pattern": f"Момент: {_PATTERN_LABELS.get(state.pattern, state.pattern)} · {confidence}%",
+        "metrics": f"Bid: {bid_qty} · Ask: {ask_qty} · Imbalance: {imbalance} · Spread: {spread}",
+        "reason": "Причина: " + ("; ".join(state.explanation) if state.explanation else "—"),
+    }
+
+
 class CnyrubGui:
     def __init__(self) -> None:
         import tkinter as tk
@@ -127,8 +179,10 @@ class CnyrubGui:
         self.output_queue: queue.Queue[str] = queue.Queue()
         self.process: subprocess.Popen[str] | None = None
         self.fields: dict[str, tk.StringVar] = {}
+        self.status_vars: dict[str, tk.StringVar] = {}
         self._build_ui()
         self.root.after(100, self._drain_output_queue)
+        self.root.after(250, self._refresh_dashboard_state)
 
     def _var(self, name: str, value: str = ""):
         var = self.tk.StringVar(value=value)
@@ -160,6 +214,14 @@ class CnyrubGui:
         self._add_row(settings, 0, "SECID", "secid", DEFAULT_SECID)
         self._add_row(settings, 1, "QUIK JSON стакана", "orderbook_path", paths.orderbook_path)
         self._add_row(settings, 2, "SQLite база стакана", "db_path", paths.db_path)
+
+        status = ttk.LabelFrame(main, text="Статус / момент рынка", padding=8)
+        status.pack(fill="x", pady=8)
+        for row, key in enumerate(("db", "quik", "advantage", "pattern", "metrics", "reason")):
+            var = tk.StringVar(value="—")
+            self.status_vars[key] = var
+            ttk.Label(status, textvariable=var).grid(row=row, column=0, sticky="w", padx=6, pady=2)
+        status.columnconfigure(0, weight=1)
 
         tabs = ttk.Notebook(main)
         tabs.pack(fill="x", pady=8)
@@ -226,6 +288,22 @@ class CnyrubGui:
 
     def _get(self, name: str) -> str:
         return self.fields[name].get().strip()
+
+    def _refresh_dashboard_state(self) -> None:
+        try:
+            state = build_dashboard_state(
+                self._get("db_path"),
+                orderbook_path=self._get("orderbook_path"),
+                levels=int(float(self._get("levels") or 10)) if "levels" in self.fields else 10,
+            )
+            for key, value in dashboard_state_lines(state).items():
+                if key in self.status_vars:
+                    self.status_vars[key].set(value)
+        except Exception as exc:  # keep GUI alive even if a path/SQLite value is invalid
+            if "db" in self.status_vars:
+                self.status_vars["db"].set(f"База: ошибка · {exc}")
+        finally:
+            self.root.after(1000, self._refresh_dashboard_state)
 
     def _command_for_action(self, action: str) -> list[str]:
         common = {"secid": self._get("secid")}
