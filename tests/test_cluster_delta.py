@@ -2,7 +2,17 @@ from datetime import datetime, timezone
 
 from pathlib import Path
 
-from cnyrub_tom.clusterdelta import build_cluster_delta_rows, build_live_cluster_delta_state, render_cluster_delta_chart
+from cnyrub_tom.clusterdelta import (
+    build_cluster_delta_rows,
+    build_cumulative_delta_rows,
+    build_live_cluster_delta_state,
+    build_trade_alert_rows,
+    build_volume_profile_rows,
+    render_cluster_delta_chart,
+    render_cumulative_delta_chart,
+    render_trade_alerts,
+    render_volume_profile_chart,
+)
 from cnyrub_tom.models import Trade
 
 
@@ -124,3 +134,74 @@ def test_build_live_cluster_delta_state_reports_missing_file(tmp_path: Path):
     assert state.trade_count == 0
     assert "CSV сделок не найден" in state.summary
     assert "нет сделок" in state.chart
+
+
+def test_build_cumulative_delta_rows_tracks_session_delta_by_bucket():
+    rows = build_cumulative_delta_rows([
+        _trade(1, "2026-06-03T10:00:05", 12.34, 100, "B"),
+        _trade(2, "2026-06-03T10:01:05", 12.35, 30, "S"),
+        _trade(3, "2026-06-03T10:03:05", 12.36, 20, "S"),
+    ], bucket_minutes=3)
+
+    assert rows == [
+        {
+            "bucket_start": "2026-06-03T10:00:00+00:00",
+            "bucket_end": "2026-06-03T10:03:00+00:00",
+            "secid": "CNYRUB_TOM",
+            "delta": 70.0,
+            "cumulative_delta": 70.0,
+            "last_price": 12.35,
+            "volume": 130.0,
+            "trade_count": 2,
+        },
+        {
+            "bucket_start": "2026-06-03T10:03:00+00:00",
+            "bucket_end": "2026-06-03T10:06:00+00:00",
+            "secid": "CNYRUB_TOM",
+            "delta": -20.0,
+            "cumulative_delta": 50.0,
+            "last_price": 12.36,
+            "volume": 20.0,
+            "trade_count": 1,
+        },
+    ]
+    chart = render_cumulative_delta_chart(rows)
+    assert "Cumulative Delta 3m" in chart
+    assert "cum +70" in chart
+    assert "cum +50" in chart
+
+
+def test_build_volume_profile_rows_groups_volume_and_delta_by_price():
+    rows = build_volume_profile_rows([
+        _trade(1, "2026-06-03T10:00:05", 12.341, 100, "B"),
+        _trade(2, "2026-06-03T10:01:05", 12.344, 30, "S"),
+        _trade(3, "2026-06-03T10:02:05", 12.350, 20, "S"),
+    ], price_step=0.01)
+
+    assert rows[0]["price"] == 12.34
+    assert rows[0]["volume"] == 130.0
+    assert rows[0]["delta"] == 70.0
+    assert rows[0]["poc"] is True
+    assert rows[1]["price"] == 12.35
+    chart = render_volume_profile_chart(rows)
+    assert "Volume Profile" in chart
+    assert "POC" in chart
+    assert "+70" in chart
+
+
+def test_build_trade_alert_rows_highlights_delta_and_volume_profile_events():
+    trades = [
+        _trade(1, "2026-06-03T10:00:05", 12.34, 100, "B"),
+        _trade(2, "2026-06-03T10:01:05", 12.34, 80, "B"),
+        _trade(3, "2026-06-03T10:03:05", 12.35, 120, "S"),
+    ]
+
+    alerts = build_trade_alert_rows(trades, bucket_minutes=3, price_step=0.01, min_abs_delta=100, min_volume=150)
+
+    kinds = {row["kind"] for row in alerts}
+    assert "strong_buy_delta" in kinds
+    assert "strong_sell_delta" in kinds
+    assert "high_volume_price" in kinds
+    rendered = render_trade_alerts(alerts)
+    assert "смотри сюда" in rendered
+    assert "strong_buy_delta" in rendered

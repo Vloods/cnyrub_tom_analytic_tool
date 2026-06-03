@@ -160,6 +160,225 @@ def render_cluster_delta_chart(rows: list[dict[str, Any]], *, bucket_minutes: in
     return "\n".join(lines)
 
 
+def build_cumulative_delta_rows(
+    trades: list[Trade],
+    *,
+    bucket_minutes: int = 3,
+) -> list[dict[str, Any]]:
+    buckets: dict[tuple[datetime, str], dict[str, Any]] = {}
+    for trade in sorted(trades, key=lambda item: (item.ts, item.tradeno)):
+        start = _bucket_start(trade.ts, bucket_minutes)
+        key = (start, trade.secid)
+        row = buckets.setdefault(key, {
+            "bucket_start": start,
+            "bucket_end": start + timedelta(minutes=bucket_minutes),
+            "secid": trade.secid,
+            "delta": 0.0,
+            "last_price": trade.price,
+            "volume": 0.0,
+            "trade_count": 0,
+        })
+        side = (trade.buysell or "").upper()
+        if side == "B":
+            row["delta"] += float(trade.quantity)
+        elif side == "S":
+            row["delta"] -= float(trade.quantity)
+        row["last_price"] = trade.price
+        row["volume"] += float(trade.quantity)
+        row["trade_count"] += 1
+
+    cumulative = 0.0
+    rows: list[dict[str, Any]] = []
+    for row in sorted(buckets.values(), key=lambda item: item["bucket_start"]):
+        cumulative += float(row["delta"])
+        rows.append({
+            "bucket_start": row["bucket_start"].isoformat(),
+            "bucket_end": row["bucket_end"].isoformat(),
+            "secid": row["secid"],
+            "delta": row["delta"],
+            "cumulative_delta": cumulative,
+            "last_price": row["last_price"],
+            "volume": row["volume"],
+            "trade_count": row["trade_count"],
+        })
+    return rows
+
+
+def render_cumulative_delta_chart(rows: list[dict[str, Any]], *, bucket_minutes: int = 3) -> str:
+    if not rows:
+        return f"Cumulative Delta {bucket_minutes}m: нет сделок"
+    lines = [f"Cumulative Delta {bucket_minutes}m", "time | delta | cumulative | last price | volume"]
+    for row in rows:
+        start_dt = datetime.fromisoformat(str(row["bucket_start"]))
+        end_dt = datetime.fromisoformat(str(row["bucket_end"]))
+        time_label = f"{start_dt:%H:%M}-{end_dt:%H:%M}"
+        lines.append(
+            f"{time_label} | delta {_format_qty(float(row['delta']))} | "
+            f"cum {_format_qty(float(row['cumulative_delta']))} | price {float(row['last_price']):.3f} | vol {float(row['volume']):.0f}"
+        )
+    return "\n".join(lines)
+
+
+def build_volume_profile_rows(trades: list[Trade], *, price_step: float | None = None) -> list[dict[str, Any]]:
+    levels: dict[tuple[str, float], dict[str, Any]] = {}
+    for trade in sorted(trades, key=lambda item: (item.price, item.ts, item.tradeno)):
+        price = _price_bucket(trade.price, price_step)
+        key = (trade.secid, price)
+        row = levels.setdefault(key, {
+            "secid": trade.secid,
+            "price": price,
+            "buy_qty": 0.0,
+            "sell_qty": 0.0,
+            "delta": 0.0,
+            "volume": 0.0,
+            "trade_count": 0,
+            "poc": False,
+        })
+        side = (trade.buysell or "").upper()
+        if side == "B":
+            row["buy_qty"] += float(trade.quantity)
+        elif side == "S":
+            row["sell_qty"] += float(trade.quantity)
+        row["volume"] += float(trade.quantity)
+        row["trade_count"] += 1
+        row["delta"] = row["buy_qty"] - row["sell_qty"]
+    rows = sorted(levels.values(), key=lambda item: float(item["price"]))
+    if rows:
+        poc_volume = max(float(row["volume"]) for row in rows)
+        for row in rows:
+            row["poc"] = float(row["volume"]) == poc_volume
+    return rows
+
+
+def render_volume_profile_chart(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "Volume Profile: нет сделок"
+    max_volume = max(float(row["volume"]) for row in rows) or 1.0
+    lines = ["Volume Profile", "price | volume | delta | buy | sell | note"]
+    for row in sorted(rows, key=lambda item: float(item["price"]), reverse=True):
+        bar = "█" * max(1, round(float(row["volume"]) / max_volume * 20))
+        note = "POC" if row.get("poc") else ""
+        lines.append(
+            f"{float(row['price']):.3f} | {float(row['volume']):.0f} {bar} | {_format_qty(float(row['delta']))} | "
+            f"{float(row['buy_qty']):.0f} | {float(row['sell_qty']):.0f} | {note}"
+        )
+    return "\n".join(lines)
+
+
+def build_trade_alert_rows(
+    trades: list[Trade],
+    *,
+    bucket_minutes: int = 3,
+    price_step: float | None = None,
+    min_abs_delta: float = 100.0,
+    min_volume: float = 150.0,
+) -> list[dict[str, Any]]:
+    alerts: list[dict[str, Any]] = []
+    for row in build_cumulative_delta_rows(trades, bucket_minutes=bucket_minutes):
+        delta = float(row["delta"])
+        if abs(delta) >= min_abs_delta:
+            alerts.append({
+                "kind": "strong_buy_delta" if delta > 0 else "strong_sell_delta",
+                "ts": row["bucket_start"],
+                "secid": row["secid"],
+                "price": row["last_price"],
+                "delta": delta,
+                "volume": row["volume"],
+                "confidence": min(1.0, abs(delta) / max(min_abs_delta, 1.0)),
+                "reason": f"3m delta {_format_qty(delta)} превышает порог {_format_qty(min_abs_delta)}",
+            })
+    for row in build_volume_profile_rows(trades, price_step=price_step):
+        volume = float(row["volume"])
+        if volume >= min_volume:
+            alerts.append({
+                "kind": "high_volume_price",
+                "ts": "session",
+                "secid": row["secid"],
+                "price": row["price"],
+                "delta": row["delta"],
+                "volume": volume,
+                "confidence": min(1.0, volume / max(min_volume, 1.0)),
+                "reason": f"цена {float(row['price']):.3f}: объем {volume:.0f} выше порога {min_volume:.0f}",
+            })
+    return sorted(alerts, key=lambda item: (str(item["ts"]), str(item["kind"]), float(item["price"] or 0)))
+
+
+def render_trade_alerts(alerts: list[dict[str, Any]]) -> str:
+    if not alerts:
+        return "События и алерты: спокойно, сильных событий нет"
+    lines = ["События и алерты — смотри сюда", "kind | time | price | delta | volume | reason"]
+    for alert in alerts:
+        lines.append(
+            f"{alert['kind']} | {alert['ts']} | {float(alert['price']):.3f} | "
+            f"{_format_qty(float(alert['delta']))} | {float(alert['volume']):.0f} | {alert['reason']}"
+        )
+    return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class LiveOrderFlowState:
+    status: str
+    summary: str
+    cumulative_chart: str
+    volume_profile_chart: str
+    alerts: str
+    trade_count: int
+    alert_count: int
+
+
+def build_live_order_flow_state(
+    trades_csv: str | Path,
+    *,
+    secid: str | None = None,
+    bucket_minutes: int = 3,
+    price_step: float | None = None,
+    min_abs_delta: float = 100.0,
+    min_volume: float = 150.0,
+) -> LiveOrderFlowState:
+    path = Path(trades_csv)
+    if not path.exists():
+        return LiveOrderFlowState(
+            status="missing",
+            summary=f"CSV сделок не найден: {path}",
+            cumulative_chart=render_cumulative_delta_chart([], bucket_minutes=bucket_minutes),
+            volume_profile_chart=render_volume_profile_chart([]),
+            alerts=render_trade_alerts([]),
+            trade_count=0,
+            alert_count=0,
+        )
+    try:
+        trades = _filter_latest_session_trades(load_trades_csv(path, secid=secid))
+        cumulative = build_cumulative_delta_rows(trades, bucket_minutes=bucket_minutes)
+        profile = build_volume_profile_rows(trades, price_step=price_step)
+        alerts = build_trade_alert_rows(
+            trades,
+            bucket_minutes=bucket_minutes,
+            price_step=price_step,
+            min_abs_delta=min_abs_delta,
+            min_volume=min_volume,
+        )
+        mtime = datetime.fromtimestamp(path.stat().st_mtime).strftime("%H:%M:%S")
+        return LiveOrderFlowState(
+            status="active" if trades else "empty",
+            summary=f"Order Flow: сделок: {len(trades)} · алертов: {len(alerts)} · файл обновлен: {mtime}",
+            cumulative_chart=render_cumulative_delta_chart(cumulative, bucket_minutes=bucket_minutes),
+            volume_profile_chart=render_volume_profile_chart(profile),
+            alerts=render_trade_alerts(alerts),
+            trade_count=len(trades),
+            alert_count=len(alerts),
+        )
+    except Exception as exc:
+        return LiveOrderFlowState(
+            status="error",
+            summary=f"Ошибка чтения order flow: {exc}",
+            cumulative_chart=render_cumulative_delta_chart([], bucket_minutes=bucket_minutes),
+            volume_profile_chart=render_volume_profile_chart([]),
+            alerts=render_trade_alerts([]),
+            trade_count=0,
+            alert_count=0,
+        )
+
+
 def build_live_cluster_delta_state(
     trades_csv: str | Path,
     *,

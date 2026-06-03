@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .clusterdelta import build_live_cluster_delta_state
+from .clusterdelta import build_live_cluster_delta_state, build_live_order_flow_state
 from .realtime import DashboardState, build_dashboard_state
 
 DEFAULT_SECID = "CNYRUB_TOM"
@@ -26,6 +26,9 @@ class DefaultPaths:
     trades_csv: str
     trades_analysis_csv: str
     cluster_delta_csv: str
+    cumulative_delta_csv: str
+    volume_profile_csv: str
+    trade_alerts_csv: str
     orderbook_jsonl: str
 
 
@@ -40,6 +43,9 @@ def default_paths() -> DefaultPaths:
         trades_csv=str(base / "cnyrub_tom_trades.csv"),
         trades_analysis_csv=str(base / "cnyrub_tom_trades_analysis.csv"),
         cluster_delta_csv=str(base / "cnyrub_tom_cluster_delta_3m.csv"),
+        cumulative_delta_csv=str(base / "cnyrub_tom_cumulative_delta_3m.csv"),
+        volume_profile_csv=str(base / "cnyrub_tom_volume_profile.csv"),
+        trade_alerts_csv=str(base / "cnyrub_tom_trade_alerts.csv"),
         orderbook_jsonl=str(base / "cnyrub_tom_orderbook.jsonl"),
     )
 
@@ -88,6 +94,18 @@ def build_cli_command(action: str, **options: Any) -> list[str]:
         _append_option(command, "--limit", options.get("limit"))
         _append_option(command, "--bucket-minutes", options.get("bucket_minutes"))
         _append_option(command, "--price-step", options.get("price_step"))
+        _append_option(command, "--output", options.get("output"))
+    elif action in {"cumulative-delta", "volume-profile", "trade-alerts"}:
+        _append_option(command, "--trades-csv", options.get("trades_csv"))
+        _append_option(command, "--from", options.get("from_date"))
+        _append_option(command, "--till", options.get("till"))
+        _append_option(command, "--limit", options.get("limit"))
+        if action != "volume-profile":
+            _append_option(command, "--bucket-minutes", options.get("bucket_minutes"))
+        _append_option(command, "--price-step", options.get("price_step"))
+        if action == "trade-alerts":
+            _append_option(command, "--min-abs-delta", options.get("min_abs_delta"))
+            _append_option(command, "--min-volume", options.get("min_volume"))
         _append_option(command, "--output", options.get("output"))
     elif action == "orderbook":
         _append_option(command, "--orderbook-path", options.get("orderbook_path"))
@@ -190,6 +208,9 @@ def action_help_text(action: str) -> str:
         "record-trades": "Запускает live-сбор сделок MOEX: регулярно дописывает только новые сделки в CSV для live cluster delta; интервал по умолчанию 0.001 сек.",
         "analyze-trades": "Считает VWAP, объем и buy/sell imbalance по сделкам.",
         "cluster-delta": "Строит 3-минутный кластер-дельта график по ценам: покупки минус продажи, объем и число сделок.",
+        "cumulative-delta": "Строит накопленную дельту по 3-минутным интервалам: видно, кто давит по всей сессии.",
+        "volume-profile": "Строит профиль объема по ценам и отмечает POC — цену с максимальным объемом.",
+        "trade-alerts": "Создает события и алерты: программа сама пишет «смотри сюда» при сильной дельте или объеме.",
         "live-cluster-delta": "Включает автообновление 3-минутного cluster delta с начала торговой сессии прямо в окне по CSV сделок.",
         "candles": "Скачивает свечи MOEX ISS в CSV.",
     }.get(action, "Выполняет выбранную команду.")
@@ -352,13 +373,21 @@ class CnyrubGui:
         self._add_row(trades_tab, 5, "Интервал live сделок, сек", "trades_record_interval", "0.001", width=16)
         self._add_row(trades_tab, 6, "Шаг цены кластера", "cluster_price_step", "0.001", width=16)
         self._add_row(trades_tab, 7, "CSV cluster delta 3m", "cluster_delta_csv", paths.cluster_delta_csv)
+        self._add_row(trades_tab, 8, "CSV cumulative delta", "cumulative_delta_csv", paths.cumulative_delta_csv)
+        self._add_row(trades_tab, 9, "CSV volume profile", "volume_profile_csv", paths.volume_profile_csv)
+        self._add_row(trades_tab, 10, "CSV событий/алертов", "trade_alerts_csv", paths.trade_alerts_csv)
+        self._add_row(trades_tab, 11, "Порог delta алерта", "trade_alert_min_abs_delta", "100", width=16)
+        self._add_row(trades_tab, 12, "Порог объема алерта", "trade_alert_min_volume", "150", width=16)
         trade_buttons = ttk.Frame(trades_tab)
-        trade_buttons.grid(row=8, column=0, columnspan=2, sticky="w", pady=8)
+        trade_buttons.grid(row=13, column=0, columnspan=2, sticky="w", pady=8)
         ttk.Button(trade_buttons, text="Показать сделки", command=lambda: self.run_action("trades-preview")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Сохранить сделки CSV", command=lambda: self.run_action("trades")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Показать анализ", command=lambda: self.run_action("analyze-trades-preview")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Сохранить анализ CSV", command=lambda: self.run_action("analyze-trades")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Cluster Delta 3m", command=lambda: self.run_action("cluster-delta")).pack(side="left", padx=3)
+        ttk.Button(trade_buttons, text="Cumulative Delta", command=lambda: self.run_action("cumulative-delta")).pack(side="left", padx=3)
+        ttk.Button(trade_buttons, text="Volume Profile", command=lambda: self.run_action("volume-profile")).pack(side="left", padx=3)
+        ttk.Button(trade_buttons, text="События/алерты", command=lambda: self.run_action("trade-alerts")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="▶ Live сделки", command=self.start_recording_trades).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="■ Stop сделки", command=self.stop_process).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="▶ Live Cluster", command=self.start_live_cluster_delta).pack(side="left", padx=3)
@@ -447,8 +476,19 @@ class CnyrubGui:
                     max_buckets=None,
                 )
                 self.live_cluster_delta_summary_var.set(state.summary)
+                flow = build_live_order_flow_state(
+                    self._get("trades_csv"),
+                    secid=self._get("secid"),
+                    bucket_minutes=3,
+                    price_step=price_step,
+                    min_abs_delta=float(self._get("trade_alert_min_abs_delta") or 100),
+                    min_volume=float(self._get("trade_alert_min_volume") or 150),
+                )
                 self.live_cluster_delta_text.delete("1.0", "end")
-                self.live_cluster_delta_text.insert("end", state.chart + "\n")
+                self.live_cluster_delta_text.insert(
+                    "end",
+                    state.chart + "\n\n" + flow.cumulative_chart + "\n\n" + flow.volume_profile_chart + "\n\n" + flow.alerts + "\n",
+                )
         except Exception as exc:
             if hasattr(self, "live_cluster_delta_text"):
                 self.live_cluster_delta_summary_var.set(f"Live Cluster Delta: ошибка · {exc}")
@@ -524,6 +564,22 @@ class CnyrubGui:
             return build_cli_command(
                 "cluster-delta", **common, trades_csv=self._get("trades_csv"), bucket_minutes=3,
                 price_step=self._get("cluster_price_step"), output=self._get("cluster_delta_csv"),
+            )
+        if action == "cumulative-delta":
+            return build_cli_command(
+                "cumulative-delta", **common, trades_csv=self._get("trades_csv"), bucket_minutes=3,
+                price_step=self._get("cluster_price_step"), output=self._get("cumulative_delta_csv"),
+            )
+        if action == "volume-profile":
+            return build_cli_command(
+                "volume-profile", **common, trades_csv=self._get("trades_csv"),
+                price_step=self._get("cluster_price_step"), output=self._get("volume_profile_csv"),
+            )
+        if action == "trade-alerts":
+            return build_cli_command(
+                "trade-alerts", **common, trades_csv=self._get("trades_csv"), bucket_minutes=3,
+                price_step=self._get("cluster_price_step"), min_abs_delta=self._get("trade_alert_min_abs_delta"),
+                min_volume=self._get("trade_alert_min_volume"), output=self._get("trade_alerts_csv"),
             )
         if action == "candles":
             return build_cli_command(

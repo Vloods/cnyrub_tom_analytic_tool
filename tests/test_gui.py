@@ -17,6 +17,9 @@ def test_default_paths_are_windows_friendly():
     assert paths.db_path.endswith("cnyrub_tom_orderbook.sqlite")
     assert paths.analysis_csv.endswith("cnyrub_tom_analysis.csv")
     assert paths.cluster_delta_csv.endswith("cnyrub_tom_cluster_delta_3m.csv")
+    assert paths.cumulative_delta_csv.endswith("cnyrub_tom_cumulative_delta_3m.csv")
+    assert paths.volume_profile_csv.endswith("cnyrub_tom_volume_profile.csv")
+    assert paths.trade_alerts_csv.endswith("cnyrub_tom_trade_alerts.csv")
 
 
 def test_recorder_state_line_is_clear_for_start_stop_buttons():
@@ -39,6 +42,9 @@ def test_action_help_text_explains_primary_buttons():
     assert "разово" in action_help_text("orderbook")
     assert "CSV" in action_help_text("detect-accumulation")
     assert "3-минут" in action_help_text("cluster-delta")
+    assert "накоплен" in action_help_text("cumulative-delta")
+    assert "профиль" in action_help_text("volume-profile")
+    assert "смотри" in action_help_text("trade-alerts")
     assert "автообнов" in action_help_text("live-cluster-delta")
     assert "сделки" in action_help_text("record-trades")
     assert action_help_text("unknown") == "Выполняет выбранную команду."
@@ -189,6 +195,24 @@ def test_build_cli_command_for_record_trades_live_csv():
         "C:\\quik_export\\cnyrub_tom_trades.csv",
         "--interval",
         "0.001",
+    ]
+
+
+def test_build_cli_command_for_cumulative_delta_volume_profile_and_alerts():
+    common = {"trades_csv": "C:\\quik_export\\cnyrub_tom_trades.csv", "price_step": "0.001"}
+
+    cumulative = build_cli_command("cumulative-delta", **common, bucket_minutes=3, output="C:\\quik_export\\cum.csv")
+    profile = build_cli_command("volume-profile", **common, output="C:\\quik_export\\vp.csv")
+    alerts = build_cli_command("trade-alerts", **common, bucket_minutes=3, min_abs_delta=100, min_volume=150, output="C:\\quik_export\\alerts.csv")
+
+    assert cumulative == [
+        "cnyrub", "cumulative-delta", "--trades-csv", "C:\\quik_export\\cnyrub_tom_trades.csv", "--bucket-minutes", "3", "--price-step", "0.001", "--output", "C:\\quik_export\\cum.csv",
+    ]
+    assert profile == [
+        "cnyrub", "volume-profile", "--trades-csv", "C:\\quik_export\\cnyrub_tom_trades.csv", "--price-step", "0.001", "--output", "C:\\quik_export\\vp.csv",
+    ]
+    assert alerts == [
+        "cnyrub", "trade-alerts", "--trades-csv", "C:\\quik_export\\cnyrub_tom_trades.csv", "--bucket-minutes", "3", "--price-step", "0.001", "--min-abs-delta", "100", "--min-volume", "150", "--output", "C:\\quik_export\\alerts.csv",
     ]
 
 

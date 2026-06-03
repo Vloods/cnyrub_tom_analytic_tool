@@ -11,7 +11,16 @@ from pathlib import Path
 from typing import Any
 
 from .analysis import summarize_orderbook, summarize_trades
-from .clusterdelta import build_cluster_delta_rows, render_cluster_delta_chart
+from .clusterdelta import (
+    build_cluster_delta_rows,
+    build_cumulative_delta_rows,
+    build_trade_alert_rows,
+    build_volume_profile_rows,
+    render_cluster_delta_chart,
+    render_cumulative_delta_chart,
+    render_trade_alerts,
+    render_volume_profile_chart,
+)
 from .dataset import build_feature_rows, build_label_rows
 from .models import Trade
 from .orderflow import AccumulationZone, LiquidityEvent, detect_accumulation_zones, detect_liquidity_events
@@ -182,6 +191,50 @@ def _cluster_delta(args: argparse.Namespace) -> int:
         ])
         print(f"saved {len(rows)} cluster delta rows to {args.output}")
     print(render_cluster_delta_chart(rows, bucket_minutes=args.bucket_minutes))
+    return 0
+
+
+def _load_trade_source(args: argparse.Namespace) -> list[Trade]:
+    return _load_trades_csv(args.trades_csv, secid=args.secid) if args.trades_csv else MoexIssProvider().get_trades(
+        args.secid,
+        from_=getattr(args, "from_date", None),
+        till=getattr(args, "till", None),
+        limit=getattr(args, "limit", 1000),
+    )
+
+
+def _cumulative_delta(args: argparse.Namespace) -> int:
+    rows = build_cumulative_delta_rows(_load_trade_source(args), bucket_minutes=args.bucket_minutes)
+    if args.output:
+        _write_csv(args.output, rows, fallback_fieldnames=[
+            "bucket_start", "bucket_end", "secid", "delta", "cumulative_delta", "last_price", "volume", "trade_count",
+        ])
+        print(f"saved {len(rows)} cumulative delta rows to {args.output}")
+    print(render_cumulative_delta_chart(rows, bucket_minutes=args.bucket_minutes))
+    return 0
+
+
+def _volume_profile(args: argparse.Namespace) -> int:
+    rows = build_volume_profile_rows(_load_trade_source(args), price_step=args.price_step)
+    if args.output:
+        _write_csv(args.output, rows, fallback_fieldnames=["secid", "price", "buy_qty", "sell_qty", "delta", "volume", "trade_count", "poc"])
+        print(f"saved {len(rows)} volume profile rows to {args.output}")
+    print(render_volume_profile_chart(rows))
+    return 0
+
+
+def _trade_alerts(args: argparse.Namespace) -> int:
+    rows = build_trade_alert_rows(
+        _load_trade_source(args),
+        bucket_minutes=args.bucket_minutes,
+        price_step=args.price_step,
+        min_abs_delta=args.min_abs_delta,
+        min_volume=args.min_volume,
+    )
+    if args.output:
+        _write_csv(args.output, rows, fallback_fieldnames=["kind", "ts", "secid", "price", "delta", "volume", "confidence", "reason"])
+        print(f"saved {len(rows)} trade alerts to {args.output}")
+    print(render_trade_alerts(rows))
     return 0
 
 
@@ -451,6 +504,37 @@ def build_parser() -> argparse.ArgumentParser:
     cluster.add_argument("--price-step", type=float, help="Optional price grouping step, e.g. 0.001 or 0.01")
     cluster.add_argument("--output", help="CSV output path")
     cluster.set_defaults(func=_cluster_delta)
+
+    cumulative = sub.add_parser("cumulative-delta", help="Build cumulative delta by time bucket from trades")
+    cumulative.add_argument("--trades-csv", help="CSV with trades; if omitted, downloads MOEX anonymous trades")
+    cumulative.add_argument("--from", dest="from_date", help="YYYY-MM-DD when downloading MOEX trades")
+    cumulative.add_argument("--till", help="YYYY-MM-DD when downloading MOEX trades")
+    cumulative.add_argument("--limit", type=int, default=1000)
+    cumulative.add_argument("--bucket-minutes", type=int, default=3)
+    cumulative.add_argument("--price-step", type=float, help="Accepted for GUI symmetry; cumulative delta ignores price grouping")
+    cumulative.add_argument("--output", help="CSV output path")
+    cumulative.set_defaults(func=_cumulative_delta)
+
+    profile = sub.add_parser("volume-profile", help="Build session volume profile by price from trades")
+    profile.add_argument("--trades-csv", help="CSV with trades; if omitted, downloads MOEX anonymous trades")
+    profile.add_argument("--from", dest="from_date", help="YYYY-MM-DD when downloading MOEX trades")
+    profile.add_argument("--till", help="YYYY-MM-DD when downloading MOEX trades")
+    profile.add_argument("--limit", type=int, default=1000)
+    profile.add_argument("--price-step", type=float, help="Optional price grouping step, e.g. 0.001 or 0.01")
+    profile.add_argument("--output", help="CSV output path")
+    profile.set_defaults(func=_volume_profile)
+
+    alerts = sub.add_parser("trade-alerts", help="Detect strong delta and high-volume price alerts from trades")
+    alerts.add_argument("--trades-csv", help="CSV with trades; if omitted, downloads MOEX anonymous trades")
+    alerts.add_argument("--from", dest="from_date", help="YYYY-MM-DD when downloading MOEX trades")
+    alerts.add_argument("--till", help="YYYY-MM-DD when downloading MOEX trades")
+    alerts.add_argument("--limit", type=int, default=1000)
+    alerts.add_argument("--bucket-minutes", type=int, default=3)
+    alerts.add_argument("--price-step", type=float)
+    alerts.add_argument("--min-abs-delta", type=float, default=100.0)
+    alerts.add_argument("--min-volume", type=float, default=150.0)
+    alerts.add_argument("--output", help="CSV output path")
+    alerts.set_defaults(func=_trade_alerts)
 
     ob = sub.add_parser("orderbook", help="Fetch one full-orderbook snapshot from QUIK JSON file or broker/feed JSON endpoint")
     ob.add_argument("--orderbook-url")

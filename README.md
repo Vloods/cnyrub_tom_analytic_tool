@@ -228,13 +228,64 @@ bucket_start, bucket_end, price, buy_qty, sell_qty, delta, volume, trade_count
 Сделки MOEX → Cluster Delta 3m
 ```
 
+Cumulative Delta — накопленная дельта по 3-минутным интервалам:
+
+```bash
+cnyrub cumulative-delta \
+  --trades-csv C:\\quik_export\\cnyrub_tom_trades.csv \
+  --bucket-minutes 3 \
+  --price-step 0.001 \
+  --output C:\\quik_export\\cnyrub_tom_cumulative_delta_3m.csv
+```
+
+Он показывает, кто давит по сессии: покупатель или продавец. Строки CSV:
+
+```text
+bucket_start, bucket_end, secid, delta, cumulative_delta, last_price, volume, trade_count
+```
+
+Volume Profile — профиль объема по ценам с отметкой POC:
+
+```bash
+cnyrub volume-profile \
+  --trades-csv C:\\quik_export\\cnyrub_tom_trades.csv \
+  --price-step 0.001 \
+  --output C:\\quik_export\\cnyrub_tom_volume_profile.csv
+```
+
+Строки CSV:
+
+```text
+secid, price, buy_qty, sell_qty, delta, volume, trade_count, poc
+```
+
+События и алерты — программа сама пишет "смотри сюда" при сильной дельте или большом объеме на цене:
+
+```bash
+cnyrub trade-alerts \
+  --trades-csv C:\\quik_export\\cnyrub_tom_trades.csv \
+  --bucket-minutes 3 \
+  --price-step 0.001 \
+  --min-abs-delta 100 \
+  --min-volume 150 \
+  --output C:\\quik_export\\cnyrub_tom_trade_alerts.csv
+```
+
+В GUI это кнопки:
+
+```text
+Сделки MOEX → Cumulative Delta
+Сделки MOEX → Volume Profile
+Сделки MOEX → События/алерты
+```
+
 Live-вариант прямо в окне:
 
 ```text
 Сделки MOEX → ▶ Live Cluster
 ```
 
-Он раз в секунду перечитывает CSV сделок, строит все 3-минутные кластеры с начала текущей торговой сессии и показывает график без ручного запуска команды. Если в CSV есть сделки за прошлые дни, live-окно берет последнюю торговую дату как текущую сессию. Остановка:
+Он раз в секунду перечитывает CSV сделок, строит все 3-минутные кластеры с начала текущей торговой сессии и показывает в одном live-блоке: Cluster Delta, Cumulative Delta, Volume Profile и события/алерты без ручного запуска команд. Если в CSV есть сделки за прошлые дни, live-окно берет последнюю торговую дату как текущую сессию. Остановка:
 
 ```text
 Сделки MOEX → ■ Stop Live
