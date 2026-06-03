@@ -38,6 +38,7 @@ def test_action_help_text_explains_primary_buttons():
     assert "разово" in action_help_text("orderbook")
     assert "CSV" in action_help_text("detect-accumulation")
     assert "3-минут" in action_help_text("cluster-delta")
+    assert "автообнов" in action_help_text("live-cluster-delta")
     assert action_help_text("unknown") == "Выполняет выбранную команду."
 
 

@@ -1,11 +1,58 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import csv
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from math import floor
+from pathlib import Path
 from typing import Any
 
 from .models import Trade
+
+
+@dataclass(frozen=True)
+class LiveClusterDeltaState:
+    status: str
+    summary: str
+    chart: str
+    trade_count: int
+    row_count: int
+
+
+def _parse_trade_ts(value: str) -> datetime:
+    return datetime.fromisoformat(value.strip())
+
+
+def load_trades_csv(path: str | Path, secid: str | None = None) -> list[Trade]:
+    trades: list[Trade] = []
+    with Path(path).open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            trade_secid = row.get("secid") or row.get("SECID") or secid or "CNYRUB_TOM"
+            if secid and trade_secid != secid:
+                continue
+            ts_value = row.get("ts") or row.get("TRADETIME") or row.get("tradetime") or ""
+            trades.append(Trade(
+                tradeno=int(float(row.get("tradeno") or row.get("TRADENO") or len(trades) + 1)),
+                secid=trade_secid,
+                ts=_parse_trade_ts(ts_value),
+                price=float(row.get("price") or row.get("PRICE") or 0),
+                quantity=float(row.get("quantity") or row.get("QUANTITY") or 0),
+                value=float(row.get("value") or row.get("VALUE") or 0),
+                buysell=row.get("buysell") or row.get("BUYSELL"),
+                boardid=row.get("boardid") or row.get("BOARDID"),
+                source=row.get("source") or "csv-trades",
+            ))
+    return trades
+
+
+def _limit_recent_buckets(rows: list[dict[str, Any]], max_buckets: int) -> list[dict[str, Any]]:
+    if max_buckets <= 0:
+        return rows
+    bucket_starts = sorted({str(row["bucket_start"]) for row in rows})
+    allowed = set(bucket_starts[-max_buckets:])
+    return [row for row in rows if str(row["bucket_start"]) in allowed]
 
 
 def _normalize_ts(ts: datetime) -> datetime:
@@ -104,3 +151,44 @@ def render_cluster_delta_chart(rows: list[dict[str, Any]], *, bucket_minutes: in
                 f"{float(row['buy_qty']):.0f} | {float(row['sell_qty']):.0f} | {float(row['volume']):.0f}"
             )
     return "\n".join(lines)
+
+
+def build_live_cluster_delta_state(
+    trades_csv: str | Path,
+    *,
+    secid: str | None = None,
+    bucket_minutes: int = 3,
+    price_step: float | None = None,
+    max_buckets: int = 4,
+) -> LiveClusterDeltaState:
+    path = Path(trades_csv)
+    if not path.exists():
+        return LiveClusterDeltaState(
+            status="missing",
+            summary=f"CSV сделок не найден: {path}",
+            chart=render_cluster_delta_chart([], bucket_minutes=bucket_minutes),
+            trade_count=0,
+            row_count=0,
+        )
+    try:
+        trades = load_trades_csv(path, secid=secid)
+        rows = build_cluster_delta_rows(trades, bucket_minutes=bucket_minutes, price_step=price_step)
+        rows = _limit_recent_buckets(rows, max_buckets)
+        chart = render_cluster_delta_chart(rows, bucket_minutes=bucket_minutes)
+        mtime = datetime.fromtimestamp(path.stat().st_mtime).strftime("%H:%M:%S")
+        total_delta = sum(float(row["delta"]) for row in rows)
+        return LiveClusterDeltaState(
+            status="active" if rows else "empty",
+            summary=f"Live Cluster Delta: сделок: {len(trades)} · строк: {len(rows)} · delta: {_format_qty(total_delta)} · файл обновлен: {mtime}",
+            chart=chart,
+            trade_count=len(trades),
+            row_count=len(rows),
+        )
+    except Exception as exc:
+        return LiveClusterDeltaState(
+            status="error",
+            summary=f"Ошибка чтения cluster delta: {exc}",
+            chart=render_cluster_delta_chart([], bucket_minutes=bucket_minutes),
+            trade_count=0,
+            row_count=0,
+        )

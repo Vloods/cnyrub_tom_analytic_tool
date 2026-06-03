@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .clusterdelta import build_live_cluster_delta_state
 from .realtime import DashboardState, build_dashboard_state
 
 DEFAULT_SECID = "CNYRUB_TOM"
@@ -178,6 +179,7 @@ def action_help_text(action: str) -> str:
         "trades": "Сохраняет обезличенные сделки MOEX в CSV.",
         "analyze-trades": "Считает VWAP, объем и buy/sell imbalance по сделкам.",
         "cluster-delta": "Строит 3-минутный кластер-дельта график по ценам: покупки минус продажи, объем и число сделок.",
+        "live-cluster-delta": "Включает автообновление 3-минутного cluster delta прямо в окне по CSV сделок.",
         "candles": "Скачивает свечи MOEX ISS в CSV.",
     }.get(action, "Выполняет выбранную команду.")
 
@@ -228,10 +230,13 @@ class CnyrubGui:
         self.status_vars: dict[str, tk.StringVar] = {}
         self.recorder_state_var = tk.StringVar(value=recorder_state_line(False, None))
         self.help_var = tk.StringVar(value="Готово. Начни с запуска QUIK и проверки стакана.")
+        self.live_cluster_delta_enabled = False
+        self.live_cluster_delta_summary_var = tk.StringVar(value="Live Cluster Delta: выключен")
         self._build_ui()
         self.root.after(100, self._drain_output_queue)
         self.root.after(250, self._refresh_dashboard_state)
         self.root.after(250, self._refresh_recorder_state)
+        self.root.after(500, self._refresh_live_cluster_delta)
 
     def _var(self, name: str, value: str = ""):
         var = self.tk.StringVar(value=value)
@@ -342,6 +347,15 @@ class CnyrubGui:
         ttk.Button(trade_buttons, text="Показать анализ", command=lambda: self.run_action("analyze-trades-preview")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Сохранить анализ CSV", command=lambda: self.run_action("analyze-trades")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Cluster Delta 3m", command=lambda: self.run_action("cluster-delta")).pack(side="left", padx=3)
+        ttk.Button(trade_buttons, text="▶ Live Cluster", command=self.start_live_cluster_delta).pack(side="left", padx=3)
+        ttk.Button(trade_buttons, text="■ Stop Live", command=self.stop_live_cluster_delta).pack(side="left", padx=3)
+
+        live_frame = ttk.LabelFrame(trades_tab, text="Live Cluster Delta 3m", padding=8)
+        live_frame.grid(row=8, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
+        ttk.Label(live_frame, textvariable=self.live_cluster_delta_summary_var).pack(anchor="w")
+        self.live_cluster_delta_text = tk.Text(live_frame, wrap="none", height=10, width=110)
+        self.live_cluster_delta_text.pack(fill="x", expand=True, pady=4)
+        self.live_cluster_delta_text.insert("end", "Нажми ▶ Live Cluster — график будет обновляться сам из CSV сделок.\n")
 
         candles_tab = ttk.Frame(tabs, padding=8)
         tabs.add(candles_tab, text="Свечи")
@@ -391,6 +405,38 @@ class CnyrubGui:
 
     def start_recording(self) -> None:
         self.run_action("record-orderbook")
+
+    def start_live_cluster_delta(self) -> None:
+        self.live_cluster_delta_enabled = True
+        self.help_var.set(action_help_text("live-cluster-delta"))
+
+    def stop_live_cluster_delta(self) -> None:
+        self.live_cluster_delta_enabled = False
+        self.live_cluster_delta_summary_var.set("Live Cluster Delta: выключен")
+        if hasattr(self, "live_cluster_delta_text"):
+            self.live_cluster_delta_text.delete("1.0", "end")
+            self.live_cluster_delta_text.insert("end", "Live Cluster остановлен.\n")
+
+    def _refresh_live_cluster_delta(self) -> None:
+        try:
+            if self.live_cluster_delta_enabled and hasattr(self, "live_cluster_delta_text"):
+                price_step_text = self._get("cluster_price_step") if "cluster_price_step" in self.fields else "0.001"
+                price_step = float(price_step_text) if price_step_text else None
+                state = build_live_cluster_delta_state(
+                    self._get("trades_csv"),
+                    secid=self._get("secid"),
+                    bucket_minutes=3,
+                    price_step=price_step,
+                    max_buckets=4,
+                )
+                self.live_cluster_delta_summary_var.set(state.summary)
+                self.live_cluster_delta_text.delete("1.0", "end")
+                self.live_cluster_delta_text.insert("end", state.chart + "\n")
+        except Exception as exc:
+            if hasattr(self, "live_cluster_delta_text"):
+                self.live_cluster_delta_summary_var.set(f"Live Cluster Delta: ошибка · {exc}")
+        finally:
+            self.root.after(1000, self._refresh_live_cluster_delta)
 
     def open_path(self, target: str) -> None:
         if target == "export_dir":

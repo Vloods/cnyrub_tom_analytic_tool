@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
-from cnyrub_tom.clusterdelta import build_cluster_delta_rows, render_cluster_delta_chart
+from pathlib import Path
+
+from cnyrub_tom.clusterdelta import build_cluster_delta_rows, build_live_cluster_delta_state, render_cluster_delta_chart
 from cnyrub_tom.models import Trade
 
 
@@ -89,3 +91,33 @@ def test_render_cluster_delta_chart_shows_three_minute_buckets_prices_and_delta(
     assert "12.350" in chart
     assert "-50" in chart
     assert "+100" in chart
+
+
+def test_build_live_cluster_delta_state_reads_csv_and_limits_recent_buckets(tmp_path: Path):
+    trades_csv = tmp_path / "trades.csv"
+    trades_csv.write_text(
+        "tradeno,secid,ts,price,quantity,value,buysell\n"
+        "1,CNYRUB_TOM,2026-06-03T10:00:05+00:00,12.340,100,1234,B\n"
+        "2,CNYRUB_TOM,2026-06-03T10:03:05+00:00,12.350,50,617.5,S\n"
+        "3,CNYRUB_TOM,2026-06-03T10:06:05+00:00,12.360,25,309,B\n",
+        encoding="utf-8",
+    )
+
+    state = build_live_cluster_delta_state(trades_csv, bucket_minutes=3, price_step=0.001, max_buckets=2)
+
+    assert state.status == "active"
+    assert state.trade_count == 3
+    assert state.row_count == 2
+    assert "сделок: 3" in state.summary
+    assert "10:03-10:06" in state.chart
+    assert "10:06-10:09" in state.chart
+    assert "10:00-10:03" not in state.chart
+
+
+def test_build_live_cluster_delta_state_reports_missing_file(tmp_path: Path):
+    state = build_live_cluster_delta_state(tmp_path / "missing.csv")
+
+    assert state.status == "missing"
+    assert state.trade_count == 0
+    assert "CSV сделок не найден" in state.summary
+    assert "нет сделок" in state.chart
