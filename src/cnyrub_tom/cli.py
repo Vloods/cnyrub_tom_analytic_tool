@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .analysis import summarize_orderbook, summarize_trades
+from .clusterdelta import build_cluster_delta_rows, render_cluster_delta_chart
 from .dataset import build_feature_rows, build_label_rows
 from .models import Trade
 from .orderflow import AccumulationZone, LiquidityEvent, detect_accumulation_zones, detect_liquidity_events
@@ -109,6 +110,23 @@ def _analyze_trades(args: argparse.Namespace) -> int:
         print(f"saved trades analysis to {path}")
     else:
         _print_json(summary)
+    return 0
+
+
+def _cluster_delta(args: argparse.Namespace) -> int:
+    trades = _load_trades_csv(args.trades_csv, secid=args.secid) if args.trades_csv else MoexIssProvider().get_trades(
+        args.secid,
+        from_=args.from_date,
+        till=args.till,
+        limit=args.limit,
+    )
+    rows = build_cluster_delta_rows(trades, bucket_minutes=args.bucket_minutes, price_step=args.price_step)
+    if args.output:
+        _write_csv(args.output, rows, fallback_fieldnames=[
+            "bucket_start", "bucket_end", "secid", "price", "buy_qty", "sell_qty", "delta", "volume", "trade_count",
+        ])
+        print(f"saved {len(rows)} cluster delta rows to {args.output}")
+    print(render_cluster_delta_chart(rows, bucket_minutes=args.bucket_minutes))
     return 0
 
 
@@ -358,6 +376,16 @@ def build_parser() -> argparse.ArgumentParser:
     trades_ana.add_argument("--limit", type=int, default=100)
     trades_ana.add_argument("--output", help="CSV output path")
     trades_ana.set_defaults(func=_analyze_trades)
+
+    cluster = sub.add_parser("cluster-delta", help="Build 3-minute cluster delta/footprint rows from trades")
+    cluster.add_argument("--trades-csv", help="CSV with trades; if omitted, downloads MOEX anonymous trades")
+    cluster.add_argument("--from", dest="from_date", help="YYYY-MM-DD when downloading MOEX trades")
+    cluster.add_argument("--till", help="YYYY-MM-DD when downloading MOEX trades")
+    cluster.add_argument("--limit", type=int, default=1000, help="MOEX trade limit when --trades-csv is omitted")
+    cluster.add_argument("--bucket-minutes", type=int, default=3, help="Cluster time bucket in minutes")
+    cluster.add_argument("--price-step", type=float, help="Optional price grouping step, e.g. 0.001 or 0.01")
+    cluster.add_argument("--output", help="CSV output path")
+    cluster.set_defaults(func=_cluster_delta)
 
     ob = sub.add_parser("orderbook", help="Fetch one full-orderbook snapshot from QUIK JSON file or broker/feed JSON endpoint")
     ob.add_argument("--orderbook-url")

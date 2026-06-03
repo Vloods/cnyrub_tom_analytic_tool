@@ -138,7 +138,7 @@ cnyrub-gui
 В интерфейсе есть вкладки:
 
 - `Стакан / QUIK` — посмотреть текущий стакан из `C:\quik_export\cnyrub_tom_orderbook.json`, запустить/остановить запись в SQLite, сделать CSV-анализ, найти зоны накопления объема, найти поглощение/Iceberg-кандидатов и сделать JSONL-экспорт;
-- `Сделки MOEX` — показать обезличенные сделки, сохранить их в CSV, посчитать VWAP/объем/side imbalance;
+- `Сделки MOEX` — показать обезличенные сделки, сохранить их в CSV, посчитать VWAP/объем/side imbalance и построить 3-минутный cluster delta график;
 - `Свечи` — скачать свечи MOEX ISS в CSV.
 
 В верхнем блоке `Главное управление` есть крупные кнопки:
@@ -189,6 +189,30 @@ cnyrub trades --from 2026-06-03 --till 2026-06-03 --limit 1000 --output data/tra
 ```bash
 cnyrub analyze-trades --from 2026-06-03 --till 2026-06-03 --limit 1000 --output data/trades_analysis_2026-06-03.csv
 ```
+
+3-минутный cluster delta / footprint-график по ценовым кластерам:
+
+```bash
+cnyrub cluster-delta \
+  --trades-csv C:\\quik_export\\cnyrub_tom_trades.csv \
+  --bucket-minutes 3 \
+  --price-step 0.001 \
+  --output C:\\quik_export\\cnyrub_tom_cluster_delta_3m.csv
+```
+
+Он строит строки вида:
+
+```text
+bucket_start, bucket_end, price, buy_qty, sell_qty, delta, volume, trade_count
+```
+
+В GUI это кнопка:
+
+```text
+Сделки MOEX → Cluster Delta 3m
+```
+
+Сначала нажми `Сохранить сделки CSV`, потом `Cluster Delta 3m`.
 
 Метрики анализа сделок:
 

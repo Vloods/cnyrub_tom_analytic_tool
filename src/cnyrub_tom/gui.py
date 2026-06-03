@@ -24,6 +24,7 @@ class DefaultPaths:
     liquidity_events_csv: str
     trades_csv: str
     trades_analysis_csv: str
+    cluster_delta_csv: str
     orderbook_jsonl: str
 
 
@@ -37,6 +38,7 @@ def default_paths() -> DefaultPaths:
         liquidity_events_csv=str(base / "cnyrub_tom_liquidity_events.csv"),
         trades_csv=str(base / "cnyrub_tom_trades.csv"),
         trades_analysis_csv=str(base / "cnyrub_tom_trades_analysis.csv"),
+        cluster_delta_csv=str(base / "cnyrub_tom_cluster_delta_3m.csv"),
         orderbook_jsonl=str(base / "cnyrub_tom_orderbook.jsonl"),
     )
 
@@ -69,6 +71,14 @@ def build_cli_command(action: str, **options: Any) -> list[str]:
         _append_option(command, "--from", options.get("from_date"))
         _append_option(command, "--till", options.get("till"))
         _append_option(command, "--limit", options.get("limit"))
+        _append_option(command, "--output", options.get("output"))
+    elif action == "cluster-delta":
+        _append_option(command, "--trades-csv", options.get("trades_csv"))
+        _append_option(command, "--from", options.get("from_date"))
+        _append_option(command, "--till", options.get("till"))
+        _append_option(command, "--limit", options.get("limit"))
+        _append_option(command, "--bucket-minutes", options.get("bucket_minutes"))
+        _append_option(command, "--price-step", options.get("price_step"))
         _append_option(command, "--output", options.get("output"))
     elif action == "orderbook":
         _append_option(command, "--orderbook-path", options.get("orderbook_path"))
@@ -167,6 +177,7 @@ def action_help_text(action: str) -> str:
         "quote": "Проверяет текущую котировку через MOEX ISS.",
         "trades": "Сохраняет обезличенные сделки MOEX в CSV.",
         "analyze-trades": "Считает VWAP, объем и buy/sell imbalance по сделкам.",
+        "cluster-delta": "Строит 3-минутный кластер-дельта график по ценам: покупки минус продажи, объем и число сделок.",
         "candles": "Скачивает свечи MOEX ISS в CSV.",
     }.get(action, "Выполняет выбранную команду.")
 
@@ -322,12 +333,15 @@ class CnyrubGui:
         self._add_row(trades_tab, 2, "Лимит сделок", "trades_limit", "1000", width=16)
         self._add_row(trades_tab, 3, "CSV сделок", "trades_csv", paths.trades_csv)
         self._add_row(trades_tab, 4, "CSV анализа сделок", "trades_analysis_csv", paths.trades_analysis_csv)
+        self._add_row(trades_tab, 5, "Шаг цены кластера", "cluster_price_step", "0.001", width=16)
+        self._add_row(trades_tab, 6, "CSV cluster delta 3m", "cluster_delta_csv", paths.cluster_delta_csv)
         trade_buttons = ttk.Frame(trades_tab)
-        trade_buttons.grid(row=5, column=0, columnspan=2, sticky="w", pady=8)
+        trade_buttons.grid(row=7, column=0, columnspan=2, sticky="w", pady=8)
         ttk.Button(trade_buttons, text="Показать сделки", command=lambda: self.run_action("trades-preview")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Сохранить сделки CSV", command=lambda: self.run_action("trades")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Показать анализ", command=lambda: self.run_action("analyze-trades-preview")).pack(side="left", padx=3)
         ttk.Button(trade_buttons, text="Сохранить анализ CSV", command=lambda: self.run_action("analyze-trades")).pack(side="left", padx=3)
+        ttk.Button(trade_buttons, text="Cluster Delta 3m", command=lambda: self.run_action("cluster-delta")).pack(side="left", padx=3)
 
         candles_tab = ttk.Frame(tabs, padding=8)
         tabs.add(candles_tab, text="Свечи")
@@ -437,6 +451,11 @@ class CnyrubGui:
             return build_cli_command(
                 "analyze-trades", **common, from_date=self._get("from_date"), till=self._get("till"), limit=self._get("trades_limit"),
                 output="" if action.endswith("preview") else self._get("trades_analysis_csv"),
+            )
+        if action == "cluster-delta":
+            return build_cli_command(
+                "cluster-delta", **common, trades_csv=self._get("trades_csv"), bucket_minutes=3,
+                price_step=self._get("cluster_price_step"), output=self._get("cluster_delta_csv"),
             )
         if action == "candles":
             return build_cli_command(

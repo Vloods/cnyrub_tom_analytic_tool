@@ -16,6 +16,7 @@ def test_default_paths_are_windows_friendly():
     assert paths.orderbook_path.endswith("cnyrub_tom_orderbook.json")
     assert paths.db_path.endswith("cnyrub_tom_orderbook.sqlite")
     assert paths.analysis_csv.endswith("cnyrub_tom_analysis.csv")
+    assert paths.cluster_delta_csv.endswith("cnyrub_tom_cluster_delta_3m.csv")
 
 
 def test_recorder_state_line_is_clear_for_start_stop_buttons():
@@ -36,6 +37,7 @@ def test_action_help_text_explains_primary_buttons():
     assert "пишет стакан" in action_help_text("record-orderbook")
     assert "разово" in action_help_text("orderbook")
     assert "CSV" in action_help_text("detect-accumulation")
+    assert "3-минут" in action_help_text("cluster-delta")
     assert action_help_text("unknown") == "Выполняет выбранную команду."
 
 
@@ -162,6 +164,29 @@ def test_build_cli_command_for_detect_accumulation():
         "1000",
         "--output",
         "C:\\quik_export\\accumulation_zones.csv",
+    ]
+
+
+def test_build_cli_command_for_cluster_delta_uses_three_minute_default_chart():
+    command = build_cli_command(
+        "cluster-delta",
+        trades_csv="C:\\quik_export\\cnyrub_tom_trades.csv",
+        bucket_minutes=3,
+        price_step="0.001",
+        output="C:\\quik_export\\cnyrub_tom_cluster_delta_3m.csv",
+    )
+
+    assert command == [
+        "cnyrub",
+        "cluster-delta",
+        "--trades-csv",
+        "C:\\quik_export\\cnyrub_tom_trades.csv",
+        "--bucket-minutes",
+        "3",
+        "--price-step",
+        "0.001",
+        "--output",
+        "C:\\quik_export\\cnyrub_tom_cluster_delta_3m.csv",
     ]
 
 
