@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cnyrub-tom-analytic-tool"
+version = "0.1.0"
+description = "CLI for CNYRUB_TOM quotes, candles, order book snapshots, and analysis"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+cnyrub = "cnyrub_tom.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
