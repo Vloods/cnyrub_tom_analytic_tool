@@ -50,30 +50,50 @@ if (-not (Command-Exists "py") -and -not (Command-Exists "python")) {
     Ensure-WingetPackage "python" "Python.Python.3.11" "Python 3.11+"
 }
 
-$script:PythonExe = $null
-$script:PythonPrefixArgs = @()
-if (Command-Exists "py") {
-    & py -3.11 --version | Out-Host
-    if ($LASTEXITCODE -eq 0) {
-        $script:PythonExe = "py"
-        $script:PythonPrefixArgs = @("-3.11")
-    } else {
+function Select-Python {
+    $script:PythonExe = $null
+    $script:PythonPrefixArgs = @()
+
+    if (Command-Exists "py") {
+        & py -3.11 --version | Out-Host
+        if ($LASTEXITCODE -eq 0) {
+            $script:PythonExe = "py"
+            $script:PythonPrefixArgs = @("-3.11")
+            return
+        }
+
         & py -3 --version | Out-Host
         if ($LASTEXITCODE -eq 0) {
             $script:PythonExe = "py"
             $script:PythonPrefixArgs = @("-3")
+            return
+        }
+    }
+
+    if (Command-Exists "python") {
+        & python --version | Out-Host
+        if ($LASTEXITCODE -eq 0) {
+            $script:PythonExe = "python"
+            $script:PythonPrefixArgs = @()
+            return
         }
     }
 }
-if (-not $script:PythonExe -and (Command-Exists "python")) {
-    & python --version | Out-Host
-    if ($LASTEXITCODE -eq 0) {
-        $script:PythonExe = "python"
-        $script:PythonPrefixArgs = @()
-    }
-}
+
+Select-Python
 if (-not $script:PythonExe) {
-    throw "Python 3.11+ is not available on PATH. Install Python 3.11, then rerun this script."
+    if (-not (Command-Exists "winget")) {
+        throw "Python 3.11+ is not available on PATH and winget is not available. Install Python 3.11 manually from https://www.python.org/downloads/windows/ with 'Add python.exe to PATH', then rerun this script."
+    }
+
+    Write-Step "Installing Python 3.11 via winget"
+    winget install --id Python.Python.3.11 --exact --accept-package-agreements --accept-source-agreements
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    Select-Python
+}
+
+if (-not $script:PythonExe) {
+    throw "Python 3.11 was installed but is still not available in this PowerShell window. Open a new PowerShell window and rerun this script."
 }
 
 function Invoke-Python([string[]]$PythonArgs) {
