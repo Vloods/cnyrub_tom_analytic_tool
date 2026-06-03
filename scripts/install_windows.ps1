@@ -108,10 +108,8 @@ Invoke-Python @("-m", "pip", "install", "--upgrade", "pip")
 Invoke-Python @("-m", "pip", "install", "-e", ".")
 
 $ScriptsDirOutput = @(Invoke-Python @("-c", "import sysconfig; print(sysconfig.get_path('scripts'))"))
-$ScriptsDir = ($ScriptsDirOutput | Where-Object { $_ -and $_.ToString().Trim() } | Select-Object -Last 1)
-if ($ScriptsDir) {
-    $ScriptsDir = $ScriptsDir.ToString().Trim()
-}
+$ScriptsDir = [string]($ScriptsDirOutput | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Last 1)
+$ScriptsDir = $ScriptsDir -replace '^\s+|\s+$', ''
 if (-not $ScriptsDir -or -not (Test-Path $ScriptsDir)) {
     Write-Host "Python scripts directory detection output:" -ForegroundColor Yellow
     $ScriptsDirOutput | Out-Host
