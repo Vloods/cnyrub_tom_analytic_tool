@@ -95,25 +95,51 @@ Push-Location $InstallDir
 Invoke-Python @("-m", "pip", "install", "--upgrade", "pip")
 Invoke-Python @("-m", "pip", "install", "-e", ".")
 
-$ScriptsDir = Invoke-Python @("-c", "import sysconfig; print(sysconfig.get_path('scripts'))")
-if ($ScriptsDir -and (Test-Path $ScriptsDir)) {
-    if ($env:Path -notlike "*$ScriptsDir*") {
-        $env:Path = "$ScriptsDir;$env:Path"
-    }
-    $UserPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
-    if ($UserPath -notlike "*$ScriptsDir*") {
-        [System.Environment]::SetEnvironmentVariable("Path", "$ScriptsDir;$UserPath", "User")
-        Write-Host "Added Python Scripts to user PATH: $ScriptsDir"
-    }
+$ScriptsDir = (Invoke-Python @("-c", "import sysconfig; print(sysconfig.get_path('scripts'))") | Select-Object -Last 1).Trim()
+if (-not $ScriptsDir -or -not (Test-Path $ScriptsDir)) {
+    throw "Could not locate Python Scripts directory after installation."
 }
 
+if ($env:Path -notlike "*$ScriptsDir*") {
+    $env:Path = "$ScriptsDir;$env:Path"
+}
+$UserPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+if ($UserPath -notlike "*$ScriptsDir*") {
+    [System.Environment]::SetEnvironmentVariable("Path", "$ScriptsDir;$UserPath", "User")
+    Write-Host "Added Python Scripts to user PATH: $ScriptsDir"
+}
+
+function Get-InstalledCommandPath([string]$CommandName) {
+    $Command = Get-Command $CommandName -ErrorAction SilentlyContinue
+    if ($Command) {
+        return $Command.Source
+    }
+
+    $ExePath = Join-Path $ScriptsDir "$CommandName.exe"
+    if (Test-Path $ExePath) {
+        return $ExePath
+    }
+
+    $ScriptPath = Join-Path $ScriptsDir $CommandName
+    if (Test-Path $ScriptPath) {
+        return $ScriptPath
+    }
+
+    throw "Installed command '$CommandName' was not found. Expected it in: $ScriptsDir"
+}
+
+$CnyrubCmd = Get-InstalledCommandPath "cnyrub"
+$CnyrubGuiCmd = Get-InstalledCommandPath "cnyrub-gui"
+
 Write-Step "Verifying CLI commands"
-cnyrub --help | Select-String "detect-liquidity-events" | Out-Host
-cnyrub quote | Out-Host
+& $CnyrubCmd --help | Select-String "detect-liquidity-events" | Out-Host
+& $CnyrubCmd quote | Out-Host
 
 Write-Step "Installed successfully"
 Write-Host "Project directory: $InstallDir"
 Write-Host "QUIK export directory: $ExportDir"
-Write-Host "Run GUI with: cnyrub-gui"
-Write-Host "Run CLI with: cnyrub quote"
+Write-Host "Python Scripts directory: $ScriptsDir"
+Write-Host "Run GUI with: $CnyrubGuiCmd"
+Write-Host "Run CLI with: $CnyrubCmd quote"
+Write-Host "If plain 'cnyrub' is not recognized in the current window, open a new PowerShell window and run: cnyrub quote"
 Pop-Location
