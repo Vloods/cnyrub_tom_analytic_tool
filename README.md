@@ -52,13 +52,43 @@ SEC_CODE   = CNYRUB_TOM
 
 ### 1. Установить проект
 
+#### Windows: быстрая установка на отдельный ПК
+
+Откройте PowerShell и выполните:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+iwr https://raw.githubusercontent.com/Vloods/cnyrub_tom_analytic_tool/main/scripts/install_windows.ps1 -UseBasicParsing | iex
+```
+
+Скрипт проверит Git/Python, склонирует репозиторий в:
+
+```text
+%USERPROFILE%\Documents\cnyrub_tom_analytic_tool
+```
+
+создаст папку:
+
+```text
+C:\quik_export
+```
+
+и установит команды:
+
+```text
+cnyrub
+cnyrub-gui
+```
+
+#### Ручная установка
+
 Linux/macOS:
 
 ```bash
 python -m pip install -e .
 ```
 
-Windows PowerShell:
+Windows PowerShell из папки проекта:
 
 ```powershell
 py -m pip install -e .
