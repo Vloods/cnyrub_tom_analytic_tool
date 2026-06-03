@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .analysis import summarize_orderbook, summarize_trades
+from .orderflow import AccumulationZone, detect_accumulation_zones
 from .providers import DEFAULT_SECID, FileOrderBookProvider, HttpJsonOrderBookProvider, MoexIssProvider, ProviderCapabilityError
 from .storage import SnapshotStore
 
@@ -172,6 +173,56 @@ def _analyze_orderbook(args: argparse.Namespace) -> int:
     return 0
 
 
+def _accumulation_fieldnames() -> list[str]:
+    return [
+        "kind",
+        "start_ts",
+        "end_ts",
+        "secid",
+        "snapshots",
+        "mid_low",
+        "mid_high",
+        "mid_range",
+        "avg_mid",
+        "avg_spread",
+        "avg_bid_qty",
+        "avg_ask_qty",
+        "avg_total_depth",
+        "avg_imbalance",
+        "confidence",
+        "reason",
+    ]
+
+
+def _accumulation_rows(zones: list[AccumulationZone]) -> list[dict[str, Any]]:
+    return [{field: zone.to_row()[field] for field in _accumulation_fieldnames()} for zone in zones]
+
+
+def _detect_accumulation(args: argparse.Namespace) -> int:
+    books = list(SnapshotStore(args.db).iter_orderbooks(secid=args.secid))
+    zones = detect_accumulation_zones(
+        books,
+        levels=args.levels,
+        window=args.window,
+        min_snapshots=args.min_snapshots,
+        max_mid_range=args.max_mid_range,
+        min_total_depth=args.min_total_depth,
+        imbalance_threshold=args.imbalance_threshold,
+    )
+    rows = _accumulation_rows(zones)
+    if args.output:
+        path = Path(args.output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=_accumulation_fieldnames())
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"saved {len(rows)} accumulation zones to {path}")
+    else:
+        _print_json(rows)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cnyrub", description="CNYRUB_TOM quotes, candles, full orderbook snapshots and analysis")
     parser.add_argument("--secid", default=DEFAULT_SECID)
@@ -227,6 +278,17 @@ def build_parser() -> argparse.ArgumentParser:
     ana.add_argument("--levels", type=int, default=10)
     ana.add_argument("--output", help="CSV output path")
     ana.set_defaults(func=_analyze_orderbook)
+
+    accum = sub.add_parser("detect-accumulation", help="Detect narrow-range high-depth accumulation zones from recorded orderbook snapshots")
+    accum.add_argument("--db", default="data/orderbook_snapshots.sqlite")
+    accum.add_argument("--levels", type=int, default=10, help="Orderbook depth levels used for depth/imbalance metrics")
+    accum.add_argument("--window", type=int, default=20, help="Maximum snapshots per detection window")
+    accum.add_argument("--min-snapshots", type=int, default=5, help="Minimum snapshots required for a zone")
+    accum.add_argument("--max-mid-range", type=float, default=0.002, help="Maximum mid-price range inside a zone")
+    accum.add_argument("--min-total-depth", type=float, default=1000, help="Minimum average bid+ask depth over selected levels")
+    accum.add_argument("--imbalance-threshold", type=float, default=0.25, help="Side imbalance threshold for buy/sell accumulation labels")
+    accum.add_argument("--output", help="CSV output path")
+    accum.set_defaults(func=_detect_accumulation)
     return parser
 
 

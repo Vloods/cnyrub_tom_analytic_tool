@@ -17,6 +17,7 @@ class DefaultPaths:
     orderbook_path: str
     db_path: str
     analysis_csv: str
+    accumulation_csv: str
     trades_csv: str
     trades_analysis_csv: str
     orderbook_jsonl: str
@@ -28,6 +29,7 @@ def default_paths() -> DefaultPaths:
         orderbook_path=str(base / "cnyrub_tom_orderbook.json"),
         db_path=str(base / "cnyrub_tom_orderbook.sqlite"),
         analysis_csv=str(base / "cnyrub_tom_analysis.csv"),
+        accumulation_csv=str(base / "cnyrub_tom_accumulation_zones.csv"),
         trades_csv=str(base / "cnyrub_tom_trades.csv"),
         trades_analysis_csv=str(base / "cnyrub_tom_trades_analysis.csv"),
         orderbook_jsonl=str(base / "cnyrub_tom_orderbook.jsonl"),
@@ -79,6 +81,13 @@ def build_cli_command(action: str, **options: Any) -> list[str]:
         _append_option(command, "--db", options.get("db_path"))
         if action == "analyze-orderbook":
             _append_option(command, "--levels", options.get("levels"))
+        _append_option(command, "--output", options.get("output"))
+    elif action == "detect-accumulation":
+        _append_option(command, "--db", options.get("db_path"))
+        _append_option(command, "--levels", options.get("levels"))
+        _append_option(command, "--window", options.get("window"))
+        _append_option(command, "--max-mid-range", options.get("max_mid_range"))
+        _append_option(command, "--min-total-depth", options.get("min_total_depth"))
         _append_option(command, "--output", options.get("output"))
     else:
         raise ValueError(f"unknown action: {action}")
@@ -152,12 +161,16 @@ class CnyrubGui:
         self._add_row(orderbook_tab, 2, "Интервал записи, сек", "record_interval", "0.25", width=16)
         self._add_row(orderbook_tab, 3, "Ограничить временем, сек", "record_seconds", "", width=16)
         self._add_row(orderbook_tab, 4, "Ограничить количеством", "record_count", "", width=16)
+        self._add_row(orderbook_tab, 5, "Окно накопления, снимков", "accumulation_window", "20", width=16)
+        self._add_row(orderbook_tab, 6, "Макс. диапазон mid", "max_mid_range", "0.002", width=16)
+        self._add_row(orderbook_tab, 7, "Мин. глубина bid+ask", "min_total_depth", "1000", width=16)
         buttons = ttk.Frame(orderbook_tab)
-        buttons.grid(row=5, column=0, columnspan=2, sticky="w", pady=8)
+        buttons.grid(row=8, column=0, columnspan=2, sticky="w", pady=8)
         ttk.Button(buttons, text="Показать стакан", command=lambda: self.run_action("orderbook")).pack(side="left", padx=3)
         ttk.Button(buttons, text="Начать запись", command=lambda: self.run_action("record-orderbook")).pack(side="left", padx=3)
         ttk.Button(buttons, text="Остановить запись", command=self.stop_process).pack(side="left", padx=3)
         ttk.Button(buttons, text="Анализ стакана CSV", command=lambda: self.run_action("analyze-orderbook")).pack(side="left", padx=3)
+        ttk.Button(buttons, text="Накопление CSV", command=lambda: self.run_action("detect-accumulation")).pack(side="left", padx=3)
         ttk.Button(buttons, text="Экспорт JSONL", command=lambda: self.run_action("export-orderbook")).pack(side="left", padx=3)
 
         trades_tab = ttk.Frame(tabs, padding=8)
@@ -214,6 +227,12 @@ class CnyrubGui:
             )
         if action == "analyze-orderbook":
             return build_cli_command("analyze-orderbook", **common, db_path=self._get("db_path"), levels=self._get("levels"), output=default_paths().analysis_csv)
+        if action == "detect-accumulation":
+            return build_cli_command(
+                "detect-accumulation", **common, db_path=self._get("db_path"), levels=self._get("levels"),
+                window=self._get("accumulation_window"), max_mid_range=self._get("max_mid_range"),
+                min_total_depth=self._get("min_total_depth"), output=default_paths().accumulation_csv,
+            )
         if action == "export-orderbook":
             return build_cli_command("export-orderbook", **common, db_path=self._get("db_path"), output=default_paths().orderbook_jsonl)
         if action in {"trades", "trades-preview"}:

@@ -23,6 +23,7 @@ CLI-инструмент для котировок, свечей, записи �
   - mid price;
   - bid/ask depth;
   - imbalance.
+- Искать зоны накопления объема по стакану: узкий диапазон mid price + большая глубина + дисбаланс bid/ask.
 - Экспортировать полную историю стакана в JSONL.
 
 ---
@@ -84,7 +85,7 @@ cnyrub-gui
 
 В интерфейсе есть вкладки:
 
-- `Стакан / QUIK` — посмотреть текущий стакан из `C:\quik_export\cnyrub_tom_orderbook.json`, запустить/остановить запись в SQLite, сделать CSV-анализ и JSONL-экспорт;
+- `Стакан / QUIK` — посмотреть текущий стакан из `C:\quik_export\cnyrub_tom_orderbook.json`, запустить/остановить запись в SQLite, сделать CSV-анализ, найти зоны накопления объема и сделать JSONL-экспорт;
 - `Сделки MOEX` — показать обезличенные сделки, сохранить их в CSV, посчитать VWAP/объем/side imbalance;
 - `Свечи` — скачать свечи MOEX ISS в CSV.
 
@@ -250,7 +251,41 @@ cnyrub analyze-orderbook `
 | `ask_qty` | суммарный ask-объем на выбранных уровнях |
 | `imbalance` | дисбаланс: `(bid_qty - ask_qty) / (bid_qty + ask_qty)` |
 
-### 6. Экспортировать полную историю стакана
+### 6. Найти зоны накопления объема
+
+После записи истории стакана можно искать участки, где цена стоит в узком диапазоне, но в стакане держится большой объем. Это не гарантированный торговый сигнал, а объяснимый фильтр для поиска возможного накопления/поглощения.
+
+```powershell
+cnyrub detect-accumulation `
+  --db C:\quik_export\cnyrub_tom_orderbook.sqlite `
+  --levels 10 `
+  --window 20 `
+  --min-snapshots 5 `
+  --max-mid-range 0.002 `
+  --min-total-depth 1000 `
+  --imbalance-threshold 0.25 `
+  --output C:\quik_export\cnyrub_tom_accumulation_zones.csv
+```
+
+На выходе CSV с зонами:
+
+| Поле | Что означает |
+|---|---|
+| `kind` | `buy_accumulation`, `sell_accumulation` или `neutral_accumulation` |
+| `start_ts` / `end_ts` | начало и конец найденной зоны |
+| `mid_low` / `mid_high` | диапазон mid price внутри зоны |
+| `avg_bid_qty` / `avg_ask_qty` | средняя глубина bid/ask на выбранных уровнях |
+| `avg_imbalance` | средний дисбаланс bid/ask |
+| `confidence` | эвристическая уверенность 0..1 |
+| `reason` | краткое объяснение, почему зона отмечена |
+
+Интерпретация:
+
+- `buy_accumulation` — bid depth доминирует, а mid price остается в узком диапазоне; возможное накопление покупателем.
+- `sell_accumulation` — ask depth доминирует, а mid price остается в узком диапазоне; возможное распределение/продажа сверху.
+- `neutral_accumulation` — объем зажат в узком диапазоне, но сторона не выражена.
+
+### 7. Экспортировать полную историю стакана
 
 ```powershell
 cnyrub export-orderbook `

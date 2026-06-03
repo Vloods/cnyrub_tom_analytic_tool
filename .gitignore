@@ -8,3 +8,4 @@ data/*.sqlite
 data/*.sqlite-*
 data/*.csv
 data/*.jsonl
+sketches/

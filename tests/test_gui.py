@@ -68,3 +68,32 @@ def test_build_cli_command_for_analyze_trades_supports_csv_output():
         "--output",
         "data/trades_analysis.csv",
     ]
+
+
+def test_build_cli_command_for_detect_accumulation():
+    command = build_cli_command(
+        "detect-accumulation",
+        db_path="C:\\quik_export\\cnyrub_tom_orderbook.sqlite",
+        output="C:\\quik_export\\accumulation_zones.csv",
+        levels=10,
+        window=20,
+        max_mid_range=0.002,
+        min_total_depth=1000,
+    )
+
+    assert command == [
+        "cnyrub",
+        "detect-accumulation",
+        "--db",
+        "C:\\quik_export\\cnyrub_tom_orderbook.sqlite",
+        "--levels",
+        "10",
+        "--window",
+        "20",
+        "--max-mid-range",
+        "0.002",
+        "--min-total-depth",
+        "1000",
+        "--output",
+        "C:\\quik_export\\accumulation_zones.csv",
+    ]
