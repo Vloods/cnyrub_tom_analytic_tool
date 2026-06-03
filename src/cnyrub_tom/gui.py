@@ -187,7 +187,7 @@ def action_help_text(action: str) -> str:
         "export-orderbook": "Экспортирует сырую историю стакана в JSONL для дальнейшей обработки.",
         "quote": "Проверяет текущую котировку через MOEX ISS.",
         "trades": "Сохраняет обезличенные сделки MOEX в CSV.",
-        "record-trades": "Запускает live-сбор сделок MOEX: регулярно дописывает только новые сделки в CSV для live cluster delta.",
+        "record-trades": "Запускает live-сбор сделок MOEX: регулярно дописывает только новые сделки в CSV для live cluster delta; интервал по умолчанию 0.001 сек.",
         "analyze-trades": "Считает VWAP, объем и buy/sell imbalance по сделкам.",
         "cluster-delta": "Строит 3-минутный кластер-дельта график по ценам: покупки минус продажи, объем и число сделок.",
         "live-cluster-delta": "Включает автообновление 3-минутного cluster delta с начала торговой сессии прямо в окне по CSV сделок.",
@@ -349,7 +349,7 @@ class CnyrubGui:
         self._add_row(trades_tab, 2, "Лимит сделок", "trades_limit", "1000", width=16)
         self._add_row(trades_tab, 3, "CSV сделок", "trades_csv", paths.trades_csv)
         self._add_row(trades_tab, 4, "CSV анализа сделок", "trades_analysis_csv", paths.trades_analysis_csv)
-        self._add_row(trades_tab, 5, "Интервал live сделок, сек", "trades_record_interval", "1.0", width=16)
+        self._add_row(trades_tab, 5, "Интервал live сделок, сек", "trades_record_interval", "0.001", width=16)
         self._add_row(trades_tab, 6, "Шаг цены кластера", "cluster_price_step", "0.001", width=16)
         self._add_row(trades_tab, 7, "CSV cluster delta 3m", "cluster_delta_csv", paths.cluster_delta_csv)
         trade_buttons = ttk.Frame(trades_tab)

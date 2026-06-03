@@ -430,7 +430,7 @@ def build_parser() -> argparse.ArgumentParser:
     record_trades.add_argument("--till", help="YYYY-MM-DD")
     record_trades.add_argument("--limit", type=int, default=1000, help="Trades requested on each poll")
     record_trades.add_argument("--output", required=True, help="Append-only CSV output path")
-    record_trades.add_argument("--interval", type=float, default=1.0, help="Polling interval in seconds")
+    record_trades.add_argument("--interval", type=float, default=0.001, help="Polling interval in seconds")
     record_trades.add_argument("--count", type=int, help="Number of polling iterations")
     record_trades.add_argument("--seconds", type=float, help="Stop after this many seconds")
     record_trades.set_defaults(func=_record_trades)

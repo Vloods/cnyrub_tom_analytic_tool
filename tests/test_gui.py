@@ -175,7 +175,7 @@ def test_build_cli_command_for_record_trades_live_csv():
         "record-trades",
         output="C:\\quik_export\\cnyrub_tom_trades.csv",
         limit=1000,
-        interval=1.0,
+        interval=0.001,
         count=None,
         seconds=None,
     )
@@ -188,7 +188,7 @@ def test_build_cli_command_for_record_trades_live_csv():
         "--output",
         "C:\\quik_export\\cnyrub_tom_trades.csv",
         "--interval",
-        "1.0",
+        "0.001",
     ]
 
 

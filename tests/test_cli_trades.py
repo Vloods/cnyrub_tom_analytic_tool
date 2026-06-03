@@ -83,3 +83,15 @@ def test_record_trades_command_creates_empty_csv_header(monkeypatch, tmp_path):
 
     assert result == 0
     assert output.read_text(encoding="utf-8").startswith("tradeno,secid,ts,price,quantity,value,buysell,boardid,source")
+
+
+def test_record_trades_default_interval_is_one_millisecond(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "MoexIssProvider", lambda: EmptyStreamingProvider())
+    sleeps = []
+    monkeypatch.setattr(cli.time, "sleep", sleeps.append)
+    output = tmp_path / "trades.csv"
+
+    result = cli.main(["record-trades", "--output", str(output), "--count", "2"])
+
+    assert result == 0
+    assert sleeps == [0.001]
