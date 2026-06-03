@@ -47,12 +47,19 @@ def load_trades_csv(path: str | Path, secid: str | None = None) -> list[Trade]:
     return trades
 
 
-def _limit_recent_buckets(rows: list[dict[str, Any]], max_buckets: int) -> list[dict[str, Any]]:
-    if max_buckets <= 0:
+def _limit_recent_buckets(rows: list[dict[str, Any]], max_buckets: int | None) -> list[dict[str, Any]]:
+    if max_buckets is None or max_buckets <= 0:
         return rows
     bucket_starts = sorted({str(row["bucket_start"]) for row in rows})
     allowed = set(bucket_starts[-max_buckets:])
     return [row for row in rows if str(row["bucket_start"]) in allowed]
+
+
+def _filter_latest_session_trades(trades: list[Trade]) -> list[Trade]:
+    if not trades:
+        return []
+    latest_session_date = max(_normalize_ts(trade.ts).date() for trade in trades)
+    return [trade for trade in trades if _normalize_ts(trade.ts).date() == latest_session_date]
 
 
 def _normalize_ts(ts: datetime) -> datetime:
@@ -159,7 +166,7 @@ def build_live_cluster_delta_state(
     secid: str | None = None,
     bucket_minutes: int = 3,
     price_step: float | None = None,
-    max_buckets: int = 4,
+    max_buckets: int | None = None,
 ) -> LiveClusterDeltaState:
     path = Path(trades_csv)
     if not path.exists():
@@ -171,7 +178,8 @@ def build_live_cluster_delta_state(
             row_count=0,
         )
     try:
-        trades = load_trades_csv(path, secid=secid)
+        all_trades = load_trades_csv(path, secid=secid)
+        trades = _filter_latest_session_trades(all_trades)
         rows = build_cluster_delta_rows(trades, bucket_minutes=bucket_minutes, price_step=price_step)
         rows = _limit_recent_buckets(rows, max_buckets)
         chart = render_cluster_delta_chart(rows, bucket_minutes=bucket_minutes)
@@ -179,7 +187,7 @@ def build_live_cluster_delta_state(
         total_delta = sum(float(row["delta"]) for row in rows)
         return LiveClusterDeltaState(
             status="active" if rows else "empty",
-            summary=f"Live Cluster Delta: сделок: {len(trades)} · строк: {len(rows)} · delta: {_format_qty(total_delta)} · файл обновлен: {mtime}",
+            summary=f"Live Cluster Delta с начала сессии: сделок: {len(trades)} · строк: {len(rows)} · delta: {_format_qty(total_delta)} · файл обновлен: {mtime}",
             chart=chart,
             trade_count=len(trades),
             row_count=len(rows),

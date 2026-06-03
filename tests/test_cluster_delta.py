@@ -93,25 +93,28 @@ def test_render_cluster_delta_chart_shows_three_minute_buckets_prices_and_delta(
     assert "+100" in chart
 
 
-def test_build_live_cluster_delta_state_reads_csv_and_limits_recent_buckets(tmp_path: Path):
+def test_build_live_cluster_delta_state_reads_csv_from_session_start(tmp_path: Path):
     trades_csv = tmp_path / "trades.csv"
     trades_csv.write_text(
         "tradeno,secid,ts,price,quantity,value,buysell\n"
-        "1,CNYRUB_TOM,2026-06-03T10:00:05+00:00,12.340,100,1234,B\n"
-        "2,CNYRUB_TOM,2026-06-03T10:03:05+00:00,12.350,50,617.5,S\n"
-        "3,CNYRUB_TOM,2026-06-03T10:06:05+00:00,12.360,25,309,B\n",
+        "1,CNYRUB_TOM,2026-06-02T18:45:05+00:00,12.300,999,12287.7,B\n"
+        "2,CNYRUB_TOM,2026-06-03T10:00:05+00:00,12.340,100,1234,B\n"
+        "3,CNYRUB_TOM,2026-06-03T10:03:05+00:00,12.350,50,617.5,S\n"
+        "4,CNYRUB_TOM,2026-06-03T10:06:05+00:00,12.360,25,309,B\n",
         encoding="utf-8",
     )
 
-    state = build_live_cluster_delta_state(trades_csv, bucket_minutes=3, price_step=0.001, max_buckets=2)
+    state = build_live_cluster_delta_state(trades_csv, bucket_minutes=3, price_step=0.001, max_buckets=None)
 
     assert state.status == "active"
     assert state.trade_count == 3
-    assert state.row_count == 2
+    assert state.row_count == 3
+    assert "с начала сессии" in state.summary
     assert "сделок: 3" in state.summary
+    assert "10:00-10:03" in state.chart
     assert "10:03-10:06" in state.chart
     assert "10:06-10:09" in state.chart
-    assert "10:00-10:03" not in state.chart
+    assert "18:45-18:48" not in state.chart
 
 
 def test_build_live_cluster_delta_state_reports_missing_file(tmp_path: Path):

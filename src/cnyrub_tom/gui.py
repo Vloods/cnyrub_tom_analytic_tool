@@ -179,7 +179,7 @@ def action_help_text(action: str) -> str:
         "trades": "Сохраняет обезличенные сделки MOEX в CSV.",
         "analyze-trades": "Считает VWAP, объем и buy/sell imbalance по сделкам.",
         "cluster-delta": "Строит 3-минутный кластер-дельта график по ценам: покупки минус продажи, объем и число сделок.",
-        "live-cluster-delta": "Включает автообновление 3-минутного cluster delta прямо в окне по CSV сделок.",
+        "live-cluster-delta": "Включает автообновление 3-минутного cluster delta с начала торговой сессии прямо в окне по CSV сделок.",
         "candles": "Скачивает свечи MOEX ISS в CSV.",
     }.get(action, "Выполняет выбранную команду.")
 
@@ -353,7 +353,7 @@ class CnyrubGui:
         live_frame = ttk.LabelFrame(trades_tab, text="Live Cluster Delta 3m", padding=8)
         live_frame.grid(row=8, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
         ttk.Label(live_frame, textvariable=self.live_cluster_delta_summary_var).pack(anchor="w")
-        self.live_cluster_delta_text = tk.Text(live_frame, wrap="none", height=10, width=110)
+        self.live_cluster_delta_text = tk.Text(live_frame, wrap="none", height=14, width=110)
         self.live_cluster_delta_text.pack(fill="x", expand=True, pady=4)
         self.live_cluster_delta_text.insert("end", "Нажми ▶ Live Cluster — график будет обновляться сам из CSV сделок.\n")
 
@@ -427,7 +427,7 @@ class CnyrubGui:
                     secid=self._get("secid"),
                     bucket_minutes=3,
                     price_step=price_step,
-                    max_buckets=4,
+                    max_buckets=None,
                 )
                 self.live_cluster_delta_summary_var.set(state.summary)
                 self.live_cluster_delta_text.delete("1.0", "end")
