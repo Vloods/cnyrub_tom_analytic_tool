@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from .models import Candle, OrderBook, OrderLevel, Quote, now_utc
+from .models import Candle, OrderBook, OrderLevel, Quote, Trade, now_utc
 
 DEFAULT_SECID = "CNYRUB_TOM"
 MOEX_BASE = "https://iss.moex.com/iss"
@@ -87,6 +87,25 @@ def parse_moex_marketdata(payload: dict[str, Any], secid: str = DEFAULT_SECID) -
     )
 
 
+def parse_moex_trades(payload: dict[str, Any], secid: str = DEFAULT_SECID) -> list[Trade]:
+    block = payload.get("trades", {})
+    columns = block.get("columns") or []
+    trades: list[Trade] = []
+    for row in block.get("data") or []:
+        item = dict(zip(columns, row, strict=False))
+        trades.append(Trade(
+            tradeno=int(item["TRADENO"]),
+            secid=str(item.get("SECID") or secid),
+            ts=_parse_ts(item.get("SYSTIME") or item.get("TRADETIME")),
+            price=float(item["PRICE"]),
+            quantity=float(item.get("QUANTITY") or 0),
+            value=float(item.get("VALUE") or 0),
+            buysell=str(item["BUYSELL"]) if item.get("BUYSELL") not in (None, "") else None,
+            boardid=str(item["BOARDID"]) if item.get("BOARDID") not in (None, "") else None,
+        ))
+    return trades
+
+
 class MoexIssProvider:
     """Public MOEX ISS provider for quotes and candle/trade history.
 
@@ -126,6 +145,16 @@ class MoexIssProvider:
                 value=_as_float(item.get("value")),
             ))
         return candles
+
+    def get_trades(self, secid: str = DEFAULT_SECID, from_: str | None = None, till: str | None = None, limit: int = 100) -> list[Trade]:
+        path = f"{MOEX_BASE}/engines/currency/markets/selt/securities/{urllib.parse.quote(secid)}/trades.json"
+        params: dict[str, str | int] = {"iss.meta": "off", "limit": limit}
+        if from_:
+            params["from"] = from_
+        if till:
+            params["till"] = till
+        payload = self.http.get_json(f"{path}?{urllib.parse.urlencode(params)}")
+        return parse_moex_trades(payload, secid=secid)
 
     def get_orderbook(self, secid: str = DEFAULT_SECID) -> OrderBook:
         raise ProviderCapabilityError(

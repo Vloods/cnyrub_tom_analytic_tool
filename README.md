@@ -10,6 +10,7 @@ CLI-инструмент для котировок, свечей, записи �
 
 - Получать текущую котировку и top-of-book поля из публичного MOEX ISS.
 - Скачивать исторические свечи MOEX ISS в CSV.
+- Получать обезличенные сделки MOEX ISS и считать по ним VWAP/объем/агрессорный imbalance.
 - Читать полный стакан из:
   - локального JSON-файла, который пишет QUIK/QLua;
   - внешнего HTTP/JSON endpoint брокера или рыночного фида.
@@ -80,6 +81,35 @@ cnyrub candles --from 2026-06-03 --till 2026-06-03 --interval 60 --output data/c
 | `10` | 10 минут |
 | `60` | 1 час |
 | `24` | 1 день |
+
+### 4. Скачать и проанализировать обезличенные сделки
+
+Сырые обезличенные сделки MOEX ISS:
+
+```bash
+cnyrub trades --from 2026-06-03 --till 2026-06-03 --limit 1000 --output data/trades_2026-06-03.csv
+```
+
+Агрегированный анализ сделок:
+
+```bash
+cnyrub analyze-trades --from 2026-06-03 --till 2026-06-03 --limit 1000 --output data/trades_analysis_2026-06-03.csv
+```
+
+Метрики анализа сделок:
+
+| Поле | Что означает |
+|---|---|
+| `trade_count` | количество обезличенных сделок в ответе MOEX |
+| `quantity` | суммарный объем в лотах |
+| `value` | суммарный оборот |
+| `vwap` | средневзвешенная цена: `sum(price * quantity) / sum(quantity)` |
+| `min_price` / `max_price` | минимум/максимум цены сделки |
+| `last_price` | цена последней сделки в выборке |
+| `buy_quantity` / `sell_quantity` | объем сделок с флагом `BUYSELL = B/S` |
+| `side_imbalance` | `(buy_quantity - sell_quantity) / (buy_quantity + sell_quantity)` |
+
+Примечание: это именно обезличенная лента сделок MOEX ISS — без контрагентов и клиентских данных.
 
 ---
 

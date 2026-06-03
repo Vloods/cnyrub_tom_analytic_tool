@@ -34,6 +34,19 @@ class Candle:
 
 
 @dataclass(frozen=True)
+class Trade:
+    tradeno: int
+    secid: str
+    ts: datetime
+    price: float
+    quantity: float
+    value: float
+    buysell: str | None = None
+    boardid: str | None = None
+    source: str = "moex-iss-trades"
+
+
+@dataclass(frozen=True)
 class OrderLevel:
     price: float
     quantity: float

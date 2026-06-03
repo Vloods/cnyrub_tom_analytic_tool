@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .analysis import summarize_orderbook
+from .analysis import summarize_orderbook, summarize_trades
 from .providers import DEFAULT_SECID, FileOrderBookProvider, HttpJsonOrderBookProvider, MoexIssProvider, ProviderCapabilityError
 from .storage import SnapshotStore
 
@@ -58,6 +58,53 @@ def _candles(args: argparse.Namespace) -> int:
         print(f"saved {len(candles)} candles to {path}")
     else:
         _print_json([candle.__dict__ for candle in candles])
+    return 0
+
+
+def _trade_rows(trades: list[Any]) -> list[dict[str, Any]]:
+    return [{
+        "tradeno": trade.tradeno,
+        "secid": trade.secid,
+        "ts": trade.ts.isoformat(),
+        "price": trade.price,
+        "quantity": trade.quantity,
+        "value": trade.value,
+        "buysell": trade.buysell,
+        "boardid": trade.boardid,
+        "source": trade.source,
+    } for trade in trades]
+
+
+def _trades(args: argparse.Namespace) -> int:
+    trades = MoexIssProvider().get_trades(args.secid, from_=args.from_date, till=args.till, limit=args.limit)
+    rows = _trade_rows(trades)
+    if args.output:
+        path = Path(args.output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            fieldnames = ["tradeno", "secid", "ts", "price", "quantity", "value", "buysell", "boardid", "source"]
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"saved {len(rows)} anonymous trades to {path}")
+    else:
+        _print_json(rows)
+    return 0
+
+
+def _analyze_trades(args: argparse.Namespace) -> int:
+    trades = MoexIssProvider().get_trades(args.secid, from_=args.from_date, till=args.till, limit=args.limit)
+    summary = summarize_trades(trades)
+    if args.output:
+        path = Path(args.output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(summary.keys()))
+            writer.writeheader()
+            writer.writerow(summary)
+        print(f"saved trades analysis to {path}")
+    else:
+        _print_json(summary)
     return 0
 
 
@@ -139,6 +186,20 @@ def build_parser() -> argparse.ArgumentParser:
     candles.add_argument("--interval", type=int, default=1, help="MOEX interval: 1=minute, 10=10m, 60=hour, 24=day")
     candles.add_argument("--output", help="CSV output path")
     candles.set_defaults(func=_candles)
+
+    trades = sub.add_parser("trades", help="Download MOEX anonymous trades")
+    trades.add_argument("--from", dest="from_date", help="YYYY-MM-DD")
+    trades.add_argument("--till", help="YYYY-MM-DD")
+    trades.add_argument("--limit", type=int, default=100)
+    trades.add_argument("--output", help="CSV output path")
+    trades.set_defaults(func=_trades)
+
+    trades_ana = sub.add_parser("analyze-trades", help="Compute VWAP/volume/side imbalance from MOEX anonymous trades")
+    trades_ana.add_argument("--from", dest="from_date", help="YYYY-MM-DD")
+    trades_ana.add_argument("--till", help="YYYY-MM-DD")
+    trades_ana.add_argument("--limit", type=int, default=100)
+    trades_ana.add_argument("--output", help="CSV output path")
+    trades_ana.set_defaults(func=_analyze_trades)
 
     ob = sub.add_parser("orderbook", help="Fetch one full-orderbook snapshot from QUIK JSON file or broker/feed JSON endpoint")
     ob.add_argument("--orderbook-url")
