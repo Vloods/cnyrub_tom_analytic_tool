@@ -190,7 +190,7 @@ class HttpJsonOrderBookProvider:
 
 def orderbook_from_json_payload(payload: dict[str, Any], secid: str = DEFAULT_SECID, source: str = "json") -> OrderBook:
     bids_raw = payload.get("bids") if "bids" in payload else payload.get("bid", [])
-    asks_raw = payload.get("asks") if "asks" in payload else payload.get("offer", [])
+    asks_raw = payload.get("asks") if "asks" in payload else (payload.get("ask") if "ask" in payload else payload.get("offer", []))
     return OrderBook(
         secid=str(payload.get("secid") or payload.get("sec_code") or secid),
         ts=_parse_ts(payload.get("ts") or payload.get("timestamp") or payload.get("time")),

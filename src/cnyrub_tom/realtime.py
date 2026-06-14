@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .analysis import summarize_orderbook
 from .models import OrderBook
+from .providers import FileOrderBookProvider
 from .storage import SnapshotStore
 
 
@@ -119,8 +120,36 @@ def build_dashboard_state(
     db_path = Path(db_path)
     now = now or datetime.now().astimezone()
     quik_status, quik_age = _quik_status(orderbook_path, now)
+    live_book = _read_live_orderbook(orderbook_path)
 
     if not db_path.exists():
+        if live_book is not None:
+            pattern = classify_market_pattern([live_book], levels=levels)
+            summary = summarize_orderbook(live_book, levels=levels)
+            return DashboardState(
+                db_status="missing",
+                db_error=None,
+                db_path=str(db_path),
+                snapshot_count=0,
+                latest_snapshot_id=None,
+                latest_snapshot_ts=live_book.ts.isoformat(),
+                last_snapshot_age_sec=None,
+                quik_status=quik_status,
+                quik_path=str(orderbook_path) if orderbook_path else None,
+                quik_age_sec=quik_age,
+                secid=live_book.secid,
+                best_bid=_as_float(summary.get("best_bid")),
+                best_ask=_as_float(summary.get("best_ask")),
+                spread=_rounded(summary.get("spread")),
+                mid=_rounded(summary.get("mid")),
+                bid_qty=_as_float(summary.get("bid_qty")),
+                ask_qty=_as_float(summary.get("ask_qty")),
+                imbalance=_rounded(summary.get("imbalance"), digits=6),
+                advantage=pattern.advantage,
+                pattern=pattern.pattern,
+                confidence=pattern.confidence,
+                explanation=["показываю bid/ask из текущего QUIK JSON; база еще не записана", *pattern.explanation],
+            )
         return DashboardState(
             db_status="missing",
             db_error=None,
@@ -178,12 +207,20 @@ def build_dashboard_state(
         )
 
     if not books or latest is None:
-        pattern = PatternState("unknown", "no_data", 0.0, ["в базе нет snapshots"])
-        summary: dict[str, float | int | str | None] = {}
-        latest_ts = None
-        age = None
-        secid = None
-        latest_id = None
+        if live_book is not None:
+            pattern = classify_market_pattern([live_book], levels=levels)
+            summary = summarize_orderbook(live_book, levels=levels)
+            latest_ts = live_book.ts.isoformat()
+            age = None
+            secid = live_book.secid
+            latest_id = None
+        else:
+            pattern = PatternState("unknown", "no_data", 0.0, ["в базе нет snapshots"])
+            summary: dict[str, float | int | str | None] = {}
+            latest_ts = None
+            age = None
+            secid = None
+            latest_id = None
     else:
         pattern = classify_market_pattern(books, levels=levels)
         summary = summarize_orderbook(books[-1], levels=levels)
@@ -215,6 +252,18 @@ def build_dashboard_state(
         confidence=pattern.confidence,
         explanation=pattern.explanation,
     )
+
+
+def _read_live_orderbook(orderbook_path: str | Path | None) -> OrderBook | None:
+    if orderbook_path is None:
+        return None
+    path = Path(orderbook_path)
+    if not path.exists():
+        return None
+    try:
+        return FileOrderBookProvider(path).get_orderbook()
+    except Exception:
+        return None
 
 
 def _quik_status(orderbook_path: str | Path | None, now: datetime) -> tuple[str, float | None]:

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 from cnyrub_tom.models import OrderBook, OrderLevel
@@ -63,3 +64,29 @@ def test_build_dashboard_state_reports_missing_database(tmp_path):
     assert state.db_status == "missing"
     assert state.snapshot_count == 0
     assert state.pattern == "no_data"
+
+
+def test_build_dashboard_state_uses_live_quik_json_bid_ask_when_database_missing(tmp_path):
+    orderbook_path = tmp_path / "cnyrub_tom_orderbook.json"
+    orderbook_path.write_text(json.dumps({
+        "secid": "CNYRUB_TOM",
+        "ts": "2026-06-03T10:00:00+00:00",
+        "bid": [{"price": "12.340", "quantity": "5000"}],
+        "offer": [{"price": "12.350", "quantity": "3000"}],
+    }), encoding="utf-8")
+
+    state = build_dashboard_state(
+        tmp_path / "missing.sqlite",
+        orderbook_path=orderbook_path,
+        now=datetime.fromtimestamp(orderbook_path.stat().st_mtime, tz=timezone.utc),
+        levels=1,
+    )
+
+    assert state.db_status == "missing"
+    assert state.quik_status == "active"
+    assert state.best_bid == 12.34
+    assert state.best_ask == 12.35
+    assert state.spread == 0.01
+    assert state.bid_qty == 5000
+    assert state.ask_qty == 3000
+    assert state.advantage == "buyer"

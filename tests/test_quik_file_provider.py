@@ -36,3 +36,17 @@ def test_file_orderbook_provider_reads_generic_bids_asks_shape(tmp_path):
     assert book.secid == "CNYRUB_TOM"
     assert [(level.price, level.quantity) for level in book.bids] == [(10.84, 500.0)]
     assert [(level.price, level.quantity) for level in book.asks] == [(10.87, 300.0)]
+
+
+def test_file_orderbook_provider_reads_singular_bid_ask_shape(tmp_path):
+    path = tmp_path / "book_bid_ask.json"
+    path.write_text(json.dumps({
+        "ts": "2026-06-03T20:00:03+00:00",
+        "bid": [[10.83, 700]],
+        "ask": [[10.88, 400]],
+    }), encoding="utf-8")
+
+    book = FileOrderBookProvider(path).get_orderbook("CNYRUB_TOM")
+
+    assert [(level.price, level.quantity) for level in book.bids] == [(10.83, 700.0)]
+    assert [(level.price, level.quantity) for level in book.asks] == [(10.88, 400.0)]
