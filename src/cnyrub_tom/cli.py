@@ -141,19 +141,42 @@ def _append_new_trade_rows(path: Path, trades: list[Trade], seen: set[int]) -> i
     return len(new_trades)
 
 
+def _wait_after_recording_error(command: str, error: Exception, retry_interval: float, deadline: float | None) -> bool:
+    """Report a transient recorder failure and wait before the next attempt."""
+    delay = retry_interval
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            print(f"{command} error: {type(error).__name__}: {error}; time limit reached", file=sys.stderr, flush=True)
+            return False
+        delay = min(delay, remaining)
+    print(
+        f"{command} error: {type(error).__name__}: {error}; retrying in {delay:g} sec",
+        file=sys.stderr,
+        flush=True,
+    )
+    time.sleep(delay)
+    return True
+
+
 def _record_trades(args: argparse.Namespace) -> int:
     provider = MoexIssProvider()
     path = Path(args.output)
     _ensure_trade_csv(path)
     seen = _existing_trade_numbers(path)
     deadline = None if args.seconds is None else time.monotonic() + args.seconds
-    polls = 0
+    successful_polls = 0
     while True:
-        trades = provider.get_trades(args.secid, from_=args.from_date, till=args.till, limit=args.limit)
-        saved = _append_new_trade_rows(path, trades, seen)
-        polls += 1
+        try:
+            trades = provider.get_trades(args.secid, from_=args.from_date, till=args.till, limit=args.limit)
+            saved = _append_new_trade_rows(path, trades, seen)
+        except Exception as error:
+            if not _wait_after_recording_error("record-trades", error, args.retry_interval, deadline):
+                break
+            continue
+        successful_polls += 1
         print(f"saved {saved} new anonymous trades to {path} (seen={len(seen)})")
-        if args.count is not None and polls >= args.count:
+        if args.count is not None and successful_polls >= args.count:
             break
         if deadline is not None and time.monotonic() >= deadline:
             break
@@ -268,8 +291,13 @@ def _record_orderbook(args: argparse.Namespace) -> int:
     deadline = None if args.seconds is None else time.monotonic() + args.seconds
     saved = 0
     while True:
-        book = provider.get_orderbook(args.secid)
-        snapshot_id = store.save_orderbook(book)
+        try:
+            book = provider.get_orderbook(args.secid)
+            snapshot_id = store.save_orderbook(book)
+        except Exception as error:
+            if not _wait_after_recording_error("record-orderbook", error, args.retry_interval, deadline):
+                break
+            continue
         saved += 1
         print(f"saved snapshot id={snapshot_id} ts={book.ts.isoformat()} bids={len(book.bids)} asks={len(book.asks)}")
         if args.count is not None and saved >= args.count:
@@ -484,7 +512,8 @@ def build_parser() -> argparse.ArgumentParser:
     record_trades.add_argument("--limit", type=int, default=1000, help="Trades requested on each poll")
     record_trades.add_argument("--output", required=True, help="Append-only CSV output path")
     record_trades.add_argument("--interval", type=float, default=0.001, help="Polling interval in seconds")
-    record_trades.add_argument("--count", type=int, help="Number of polling iterations")
+    record_trades.add_argument("--retry-interval", type=float, default=1.0, help="Wait before retrying a failed poll, in seconds")
+    record_trades.add_argument("--count", type=int, help="Number of successful polling iterations")
     record_trades.add_argument("--seconds", type=float, help="Stop after this many seconds")
     record_trades.set_defaults(func=_record_trades)
 
@@ -548,7 +577,8 @@ def build_parser() -> argparse.ArgumentParser:
     rec.add_argument("--orderbook-path", help="Path to JSON file exported by local QUIK/QLua")
     rec.add_argument("--db", default="data/orderbook_snapshots.sqlite")
     rec.add_argument("--interval", type=float, default=1.0)
-    rec.add_argument("--count", type=int)
+    rec.add_argument("--retry-interval", type=float, default=1.0, help="Wait before retrying a failed read/write, in seconds")
+    rec.add_argument("--count", type=int, help="Number of successfully saved snapshots")
     rec.add_argument("--seconds", type=float)
     rec.set_defaults(func=_record_orderbook)
 
